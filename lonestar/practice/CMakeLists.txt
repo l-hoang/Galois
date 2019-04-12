@@ -1,0 +1,1 @@
+app(practice practice.cpp)
