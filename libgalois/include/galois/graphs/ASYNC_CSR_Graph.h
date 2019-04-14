@@ -234,6 +234,11 @@ public:
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
+    edgeIndData =
+        (EdgeIndData)malloc(edgeIndexSize);
+    edgeDst = (EdgeDst)malloc(edgeDestSize);
+    edgeData = (EdgeData)malloc(edgeDataSize);
+    /*
     // move file descriptor to node index offsets array.
     if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
         GALOIS_DIE("Failed to move file pointer to edge index array.");
@@ -258,6 +263,7 @@ public:
 
     // reading edge data is occurred on demand.
     edgeData = (EdgeData)malloc(edgeDataSize);
+    */
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
@@ -315,11 +321,84 @@ public:
     close(fd);
   }
 
+
+  /*
+    edgeIndData =
+        (EdgeIndData)malloc(edgeIndexSize);
+    edgeDst = (EdgeDst)malloc(edgeDestSize);
+    edgeData = (EdgeData)malloc(edgeDataSize);
+    */
+
   node_data_reference getData(GraphNode N,
                               MethodFlag mflag = MethodFlag::WRITE) {
     // galois::runtime::checkWrite(mflag, false);
-    if (!complSttBset.test(N)) {
+    if (!complSttBset.test(N) && loadSttBset.test(N)) {
+    // Loading request is done, but not yet complete.
+    // just skip.
+    }
+    else if (!complSttBset.test(N) && !loadSttBset.test(N)) {
+    // Loading request does not start yet.
+    // should fill neighbor index array, neighbor array, neighbor data array.
+    // Each request requires respective struct aiocb.
+    // (NOTE: I don't believe it would be the best option, but
+    // we can improve implementations.)
 
+        /* Phase 1: read corresponding edge index array */
+        /* Maybe it requires to initialize on the constructor. */
+        struct aiocb eIndAiocb;
+        bzero((char *)(&eIndAiocb), sizeof(struct aiocb));
+        eIndAiocb.aio_fildes = fd;
+        eIndAiocb.aio_offset = nodeIndexOffset;
+        eIndAiocb.aio_nbytes = sizeof(uint64_t);
+        if (N == 0) {
+            eIndAiocb.aio_buf = &edgeIndData[N];
+        } else {
+            eIndAiocb.aio_buf = &edgeIndData[N-1];
+            eIndAiocb.aio_nbytes += sizeof(uint64_t);
+            eIndAiocb.aio_offset += (N-1);
+        }
+        aio_read(&eIndAiocb);
+        while (aio_error(&eIndAiocb) == EINPROGRESS) {
+            std::cout << "Phase 1 ..\n";
+        }
+        int ret;
+        if ((ret = aio_return(&eIndAiocb)) > 0) {
+            printf("Ret[%d] \n", ret);
+            printf("Buff[%d] \n", *(uint64_t *) eIndAiocb.aio_buf);
+        }
+
+        /* Phase 2: read corresponding edge index array */
+        struct aiocb eDestAiocb;
+        bzero((char *)(&eDestAiocb), sizeof(struct aiocb));
+        eDestAiocb.aio_fildes = fd;
+        eDestAiocb.aio_offset = edgeDestOffset;
+        //eDestAiocb.aio_nbytes = sizeof(uint32_t);
+        if (N == 0) {
+            // Phase 1 should be initialized at the first phase,
+            // since in order to update edge destination array,
+            // we should know edge index range.
+            eDestAiocb.aio_nbytes = edgeIndData[1]*sizeof(uint32_t);
+            eDestAiocb.aio_buf = &edgeDst[N];
+        } else {
+            eDestAiocb.aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
+            eDestAiocb.aio_buf = &edgeIndData[N-1];
+            eDestAiocb.aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
+        }
+        aio_read(&eDestAiocb);
+        while (aio_error(&eDestAiocb) == EINPROGRESS) {
+            std::cout << "Phase 2 ..\n";
+        }
+        if ((ret = aio_return(&eDestAiocb)) > 0) {
+            printf("Ret[%d] \n", ret);
+            printf("Buff[%d] \n", *(uint64_t *) eDestAiocb.aio_buf);
+        }
+
+        loadSttBset.set(N);
+    }
+    else {
+        NodeInfo& NI = nodeData[N];
+        acquireNode(N, mflag);
+        return NI.getData();
     }
     NodeInfo& NI = nodeData[N];
     acquireNode(N, mflag);
