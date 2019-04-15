@@ -1,4 +1,4 @@
-#include "galois/graphs/ASYNC_CSR_Graph.h"
+#include "galois/graphs/ASYNCB_CSR_Graph.h"
 #include "galois/graphs/Graph.h"
 #include "galois/Galois.h"
 #include "llvm/Support/CommandLine.h"
@@ -41,6 +41,24 @@ int main(int argc, char** argv)
         */
         std::cout << std::endl;
     }
+
+    for (auto ii = graph.begin(), ei = graph.end();
+            ii != ei; ii++) {
+        std::cout << "Current Node: " << *ii << std::endl;
+        //GNode = neigh = graph.getEdgeDst(ne);
+        GNode curNode = *ii;
+        graph.getData(curNode);
+
+        /*for (auto ne : graph.edges(ii)) {
+            GNode neigh = graph.getEdgeDst(ne);
+            auto ddata = graph.getEdgeData(ne);
+            std::cout << " ," << neigh << ":" << ddata <<",";
+        }
+        */
+        std::cout << std::endl;
+    }
+    //graph.getData(0);
+    //while (true) sleep(1);
 
 
     return 0;
