@@ -32,6 +32,28 @@
 
 namespace galois {
 namespace graphs {
+
+/**
+ * aioHandler()
+ *
+ * Signal handler should be global function.
+ *
+ */
+void aioHandler(sigval_t sigval)
+{
+    struct aiocb *req;
+
+    req = (struct aiocb *) sigval.sival_ptr;
+
+    if (aio_error(req) == 0) {
+        int ret = aio_return(req);
+        printf(" ret [%d]\n", ret);
+        printf(" buff[%s]\n", req->aio_buf);
+    }
+
+    return ;
+}
+
 /**
  * Asynchronous CSR graph.
  *
@@ -234,11 +256,8 @@ public:
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
-    edgeIndData =
-        (EdgeIndData)malloc(edgeIndexSize);
     edgeDst = (EdgeDst)malloc(edgeDestSize);
     edgeData = (EdgeData)malloc(edgeDataSize);
-    /*
     // move file descriptor to node index offsets array.
     if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
         GALOIS_DIE("Failed to move file pointer to edge index array.");
@@ -253,6 +272,7 @@ public:
         GALOIS_DIE("Failed to read edge index array.");
     }
 
+    /*
     // read edge destination array.
     assert(edgeDst == nullptr);
     edgeDst = (EdgeDst)malloc(edgeDestSize);
@@ -322,13 +342,6 @@ public:
   }
 
 
-  /*
-    edgeIndData =
-        (EdgeIndData)malloc(edgeIndexSize);
-    edgeDst = (EdgeDst)malloc(edgeDestSize);
-    edgeData = (EdgeData)malloc(edgeDataSize);
-    */
-
   node_data_reference getData(GraphNode N,
                               MethodFlag mflag = MethodFlag::WRITE) {
     // galois::runtime::checkWrite(mflag, false);
@@ -345,6 +358,7 @@ public:
 
         /* Phase 1: read corresponding edge index array */
         /* Maybe it requires to initialize on the constructor. */
+        /*
         struct aiocb eIndAiocb;
         bzero((char *)(&eIndAiocb), sizeof(struct aiocb));
         eIndAiocb.aio_fildes = fd;
@@ -366,6 +380,7 @@ public:
             printf("Ret[%d] \n", ret);
             printf("Buff[%d] \n", *(uint64_t *) eIndAiocb.aio_buf);
         }
+        */
 
         /* Phase 2: read corresponding edge index array */
         struct aiocb eDestAiocb;
@@ -377,22 +392,37 @@ public:
             // Phase 1 should be initialized at the first phase,
             // since in order to update edge destination array,
             // we should know edge index range.
-            eDestAiocb.aio_nbytes = edgeIndData[1]*sizeof(uint32_t);
-            eDestAiocb.aio_buf = &edgeDst[N];
+            eDestAiocb.aio_nbytes = edgeIndData[0]*sizeof(uint32_t);
+            eDestAiocb.aio_buf = &edgeDst[0];
+        std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
+            "0" << ", file offset:" << eDestAiocb.aio_offset <<"\n";
+
         } else {
             eDestAiocb.aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
-            eDestAiocb.aio_buf = &edgeIndData[N-1];
+            eDestAiocb.aio_buf = &edgeDst[edgeIndData[N-1]];
             eDestAiocb.aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
-        }
-        aio_read(&eDestAiocb);
-        while (aio_error(&eDestAiocb) == EINPROGRESS) {
-            std::cout << "Phase 2 ..\n";
-        }
-        if ((ret = aio_return(&eDestAiocb)) > 0) {
-            printf("Ret[%d] \n", ret);
-            printf("Buff[%d] \n", *(uint64_t *) eDestAiocb.aio_buf);
+        std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
+            edgeIndData[N-1] << ", file offset:" << eDestAiocb.aio_offset <<"\n";
+
         }
 
+        // NOTE: it should be changed to SIGEV_THREAD_ID.
+        eDestAiocb.aio_sigevent.sigev_notify = SIGEV_THREAD;
+        eDestAiocb.aio_sigevent.sigev_notify_function = aioHandler;
+        eDestAiocb.aio_sigevent.sigev_notify_attributes = NULL;
+        eDestAiocb.aio_sigevent.sigev_value.sival_ptr = &eDestAiocb;
+        aio_read(&eDestAiocb);
+        /*
+        while (aio_error(&eDestAiocb) == EINPROGRESS) {
+            //std::cout << "Phase 2 ..\n";
+        }
+        int ret;
+        if ((ret = aio_return(&eDestAiocb)) > 0) {
+            printf("Ret[%d] \n", ret);
+            for (int i = 0; i < eDestAiocb.aio_nbytes/sizeof(uint32_t); i++)
+                printf("%d, Buff[%d] \n", i, *((uint32_t *) eDestAiocb.aio_buf+i));
+        }
+        */
         loadSttBset.set(N);
     }
     else {

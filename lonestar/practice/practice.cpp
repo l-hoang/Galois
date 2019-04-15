@@ -26,14 +26,19 @@ int main(int argc, char** argv)
     std::cout << "Before reading graph " << filename << "\n";
     Graph graph(filename);
 
-    for (auto ii = *graph.begin(), ei = *graph.end(); 
+    for (auto ii = graph.begin(), ei = graph.end();
             ii != ei; ii++) {
-        std::cout << "Current Node: " << ii << std::endl;
-        for (auto ne : graph.edges(ii)) {
+        std::cout << "Current Node: " << *ii << std::endl;
+        //GNode = neigh = graph.getEdgeDst(ne);
+        GNode curNode = *ii;
+        graph.getData(curNode);
+
+        /*for (auto ne : graph.edges(ii)) {
             GNode neigh = graph.getEdgeDst(ne);
             auto ddata = graph.getEdgeData(ne);
             std::cout << " ," << neigh << ":" << ddata <<",";
         }
+        */
         std::cout << std::endl;
     }
 
