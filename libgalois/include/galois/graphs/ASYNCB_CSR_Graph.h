@@ -121,15 +121,15 @@ protected:
       NodeInfo;
   typedef LargeArray<NodeInfo> NodeData;
 
-  int fd; // Edge data is read by AIO.
-  galois::DynamicBitSet loadSttBset; // maintain unloaded/loading status.
-  galois::DynamicBitSet complSttBset;// maintain complete status.
+  int fd; // open file descriptor for reads later
+
+  galois::DynamicBitSet loadStatus; // maintain unloaded/loading status.
+  galois::DynamicBitSet completeStatus;// maintain complete status.
+
   // destinations and index data comes directly from mmap'd disk
-  using EdgeIndData = uint64_t*;
-  using EdgeDst = uint32_t*;
-  // only works with uint32_t type data in graphs
-  using EdgeData = uint32_t*;
-  struct aiocb* data_aiocb;
+  using EdgeIndData = LargeArray<uint64_t>;
+  using EdgeDst = LargeArray<uint32_t>;
+  using EdgeData = LargeArray<EdgeTy>;
 
 public:
   typedef uint32_t GraphNode;
@@ -218,7 +218,7 @@ public:
     numEdges = g.sizeEdges();
     edgeSize = g.edgeSize();
 
-    std::cout << "Num of nodes: " << numNodes << ", numEdges: " << numEdges << ", edgeSize: " << edgeSize << std::endl;
+    //std::cout << "Num of nodes: " << numNodes << ", numEdges: " << numEdges << ", edgeSize: " << edgeSize << std::endl;
 
     // mmap the edge destinations and the edge indices
     fd = open(fName.c_str(), O_RDONLY);
@@ -228,7 +228,6 @@ public:
     edgeIndexSize = numNodes * sizeof(uint64_t);
     edgeDestSize = numEdges * sizeof(uint32_t);
     edgeDataSize = numEdges * sizeof(EdgeTy);
-
     // offsets for mapping
     nodeIndexOffset = 4 * sizeof(uint64_t);
     edgeDestOffset = (4 + numNodes) * sizeof(uint64_t);
@@ -237,36 +236,39 @@ public:
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
-    edgeDst = (EdgeDst)malloc(edgeDestSize);
-    edgeData = (EdgeData)malloc(edgeDataSize);
     // move file descriptor to node index offsets array.
     if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
-        GALOIS_DIE("Failed to move file pointer to edge index array.");
-    }
-
-    // read node index offsets array.
-    assert(edgeIndData == nullptr);
-    edgeIndData =
-        (EdgeIndData)malloc(edgeIndexSize);
-    
-    if (edgeIndexSize != read(fd, edgeIndData, edgeIndexSize)) {
-        GALOIS_DIE("Failed to read edge index array.");
+      GALOIS_DIE("Failed to move file pointer to edge index array.");
     }
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
       nodeData.allocateBlocked(numNodes);
-      //this->outOfLineAllocateBlocked(numNodes, false);
+      edgeIndData.allocateBlocked(numNodes);
+      edgeDst.allocateBlocked(numEdges);
+      edgeData.allocateBlocked(numEdges);
+      this->outOfLineAllocateBlocked(numNodes, false);
     } else {
       nodeData.allocateInterleaved(numNodes);
+      edgeIndData.allocateInterleaved(numNodes);
+      edgeDst.allocateInterleaved(numEdges);
+      edgeData.allocateInterleaved(numEdges);
       this->outOfLineAllocateInterleaved(numNodes);
     }
     // construct node data
     for (size_t n = 0; n < numNodes; ++n) {
       nodeData.constructAt(n);
     }
-    loadSttBset.resize(numEdges);
-    complSttBset.resize(numEdges);
+
+    // read indices for nodes (prefix sum)
+    // TODO read may not read everything at once; need to put this in a while
+    // loop
+    if (edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
+      GALOIS_DIE("Failed to read edge index array.");
+    }
+
+    loadStatus.resize(numNodes);
+    completeStatus.resize(numNodes);
   }
 
   ~ASYNC_CSR_Graph() {
@@ -274,62 +276,61 @@ public:
     close(fd);
   }
 
-
+  // TODO revise this
   node_data_reference getData(GraphNode N,
                               MethodFlag mflag = MethodFlag::WRITE) {
     // galois::runtime::checkWrite(mflag, false);
-    if (!complSttBset.test(N) && loadSttBset.test(N)) {
+    if (!completeStatus.test(N) && loadStatus.test(N)) {
     // Loading request is done, but not yet complete.
     // just skip.
-    }
-    else if (!complSttBset.test(N) && !loadSttBset.test(N)) {
+      // TODO add a busy wait
+    } else if (!completeStatus.test(N) && !loadStatus.test(N)) {
     // Loading request does not start yet.
     // should fill neighbor index array, neighbor array, neighbor data array.
     // Each request requires respective struct aiocb.
     // (NOTE: I don't believe it would be the best option, but
     // we can improve implementations.)
 
-        /* Phase 1: read corresponding edge index array */
-        struct aiocb eDestAiocb;
-        bzero((char *)(&eDestAiocb), sizeof(struct aiocb));
-        eDestAiocb.aio_fildes = fd;
-        eDestAiocb.aio_offset = edgeDestOffset;
-        if (N == 0) {
-            // Phase 1 should be initialized at the first phase,
-            // since in order to update edge destination array,
-            // we should know edge index range.
-            eDestAiocb.aio_nbytes = edgeIndData[0]*sizeof(uint32_t);
-            eDestAiocb.aio_buf = &edgeDst[0];
-        //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
-        //    "0" << ", file offset:" << eDestAiocb.aio_offset <<"\n";
-        //
-        //    std::cout << N << " >>\n";
-        //    std::cout << edgeDst[0] << "\n";
-        } else {
-            eDestAiocb.aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
-            eDestAiocb.aio_buf = &edgeDst[edgeIndData[N-1]];
-            eDestAiocb.aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
+      /* Phase 1: read corresponding edge index array */
+      struct aiocb eDestAiocb;
+      bzero((char *)(&eDestAiocb), sizeof(struct aiocb));
+      eDestAiocb.aio_fildes = fd;
+      eDestAiocb.aio_offset = edgeDestOffset;
+      if (N == 0) {
+          // Phase 1 should be initialized at the first phase,
+          // since in order to update edge destination array,
+          // we should know edge index range.
+          eDestAiocb.aio_nbytes = edgeIndData[0]*sizeof(uint32_t);
+          eDestAiocb.aio_buf = &edgeDst[0];
+      //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
+      //    "0" << ", file offset:" << eDestAiocb.aio_offset <<"\n";
+      //
+      //    std::cout << N << " >>\n";
+      //    std::cout << edgeDst[0] << "\n";
+      } else {
+          eDestAiocb.aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
+          eDestAiocb.aio_buf = &edgeDst[edgeIndData[N-1]];
+          eDestAiocb.aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
 
-        //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
-        //    edgeIndData[N-1] << ", file offset:" << eDestAiocb.aio_offset <<"\n";
+      //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
+      //    edgeIndData[N-1] << ", file offset:" << eDestAiocb.aio_offset <<"\n";
 
-        }
+      }
 
-        if(aio_read(&eDestAiocb) < 0) 
-           printf("aio_read is failed\n");
-        while (aio_error(&eDestAiocb) == EINPROGRESS) ;
-        int ret;
-        if ((ret = aio_return(&eDestAiocb)) > 0) {
-            printf("Ret[%d] \n", ret);
-            for (int i = 0; i < eDestAiocb.aio_nbytes/sizeof(uint32_t); i++)
-                printf("%d, Buff[%d] \n", i, *((uint32_t *) eDestAiocb.aio_buf+i));
-        }
-        loadSttBset.set(N);
-    }
-    else {
-        NodeInfo& NI = nodeData[N];
-        acquireNode(N, mflag);
-        return NI.getData();
+      if(aio_read(&eDestAiocb) < 0) 
+         printf("aio_read is failed\n");
+      while (aio_error(&eDestAiocb) == EINPROGRESS) ;
+      int ret;
+      if ((ret = aio_return(&eDestAiocb)) > 0) {
+          printf("Ret[%d] \n", ret);
+          for (int i = 0; i < eDestAiocb.aio_nbytes/sizeof(uint32_t); i++)
+              printf("%d, Buff[%d] \n", i, *((uint32_t *) eDestAiocb.aio_buf+i));
+      }
+      loadStatus.set(N);
+    } else {
+      NodeInfo& NI = nodeData[N];
+      acquireNode(N, mflag);
+      return NI.getData();
     }
     NodeInfo& NI = nodeData[N];
     acquireNode(N, mflag);
@@ -339,30 +340,6 @@ public:
   // note unlike LC CSR this edge data is immutable
   EdgeTy getEdgeData(edge_iterator ni,
                      MethodFlag mflag = MethodFlag::UNPROTECTED) {
-    //std::thread::id tid = std::this_tread::get_id();
-    struct aiocb data_aiocb;
-    bzero((char *)(&data_aiocb), sizeof(struct aiocb));
-    data_aiocb.aio_fildes = fd;
-    data_aiocb.aio_buf = malloc(sizeof(EdgeTy));
-    data_aiocb.aio_offset = edgeDataOffset+((*ni)*sizeof(EdgeTy));
-    data_aiocb.aio_nbytes = sizeof(EdgeTy);
-    //data_aiocb.aio_sigevent.sigev_notify = SIGEV_THREAD;
-    aio_read(&data_aiocb);
-
-    std::cout << "Offset: " << (*ni)*sizeof(EdgeTy) << std::endl;
-
-    while (aio_error(&data_aiocb) == EINPROGRESS) {
-        //std::cout << "Busy waiting ..\n";
-    }
-
-    int ret;
-    if ((ret = aio_return(&data_aiocb)) > 0) {
-        printf("Ret[%d] \n", ret);
-        printf("Buff[%d] \n", * (EdgeTy *)data_aiocb.aio_buf);
-    }
-
-    edgeData[*ni] = * (EdgeTy *) data_aiocb.aio_buf;
-
     // galois::runtime::checkWrite(mflag, false);
     return edgeData[*ni];
   }
