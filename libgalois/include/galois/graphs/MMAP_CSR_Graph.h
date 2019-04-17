@@ -126,7 +126,7 @@ protected:
   using EdgeIndData = LargeArray<uint64_t>;
   using EdgeDst = LargeArray<uint32_t>;
   // only works with uint32_t type data in graphs
-  using EdgeData = LargeArray<uint32_t>;
+  using EdgeData = LargeArray<EdgeTy>;
 
 public:
   typedef uint32_t GraphNode;
@@ -240,13 +240,13 @@ public:
 
     // edge data
     if (!std::is_void<EdgeTy>::value) {
-      uint32_t* edgeDataPointer = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
+      uint32_t* edgeDataPointer = (EdgeTy*)mmap(nullptr, numEdges * sizeof(EdgeTy),
                                  PROT_READ, MAP_PRIVATE, fd, edgeDataOffset);
       if (edgeDataPointer == nullptr) {
         GALOIS_SYS_DIE("failed to mmap edge data");
       }
-      mappings.push_back({edgeDataPointer, numEdges * sizeof(uint32_t)});
-      edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(uint32_t));
+      mappings.push_back({edgeDataPointer, numEdges * sizeof(EdgeTy)});
+      edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(EdgeTy));
     }
 
     // file done, close it
