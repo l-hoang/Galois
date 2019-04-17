@@ -123,10 +123,10 @@ protected:
   typedef LargeArray<NodeInfo> NodeData;
 
   // destinations and index data comes directly from mmap'd disk
-  using EdgeIndData = uint64_t*;
-  using EdgeDst = uint32_t*;
+  using EdgeIndData = LargeArray<uint64_t>;
+  using EdgeDst = LargeArray<uint32_t>;
   // only works with uint32_t type data in graphs
-  using EdgeData = uint32_t*;
+  using EdgeData = LargeArray<uint32_t>;
 
 public:
   typedef uint32_t GraphNode;
@@ -217,29 +217,36 @@ public:
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
     // node index offsets
-    edgeIndData = (uint64_t*)mmap(nullptr, numNodes * sizeof(uint64_t),
-                                  PROT_READ, MAP_PRIVATE, fd, nodeIndexOffset);
-    if (edgeDst == nullptr) {
+    uint64_t* edgeIndDataPointer = (uint64_t*)mmap(nullptr,
+                                     numNodes * sizeof(uint64_t),
+                                     PROT_READ, MAP_PRIVATE, fd,
+                                     nodeIndexOffset);
+    if (edgeIndDataPointer == nullptr) {
       GALOIS_SYS_DIE("failed to mmap index data");
     }
-    mappings.push_back({edgeIndData, numNodes * sizeof(uint64_t)});
+    mappings.push_back({edgeIndDataPointer, numNodes * sizeof(uint64_t)});
+    // save large array using copy (swaps over sizes and pointer)
+    edgeIndData = LargeArray<uint64_t>(edgeIndDataPointer,
+                                       numNodes * sizeof(uint64_t));
 
     // edge destinations
-    edgeDst = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
-                              PROT_READ, MAP_PRIVATE, fd, edgeDestOffset);
-    if (edgeDst == nullptr) {
+    uint32_t* edgeDstPointer = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
+                                 PROT_READ, MAP_PRIVATE, fd, edgeDestOffset);
+    if (edgeDstPointer == nullptr) {
       GALOIS_SYS_DIE("failed to mmap edge dst");
     }
-    mappings.push_back({edgeDst, numEdges * sizeof(uint32_t)});
+    mappings.push_back({edgeDstPointer, numEdges * sizeof(uint32_t)});
+    edgeDst = LargeArray<uint32_t>(edgeDstPointer, numEdges * sizeof(uint32_t));
 
     // edge data
     if (!std::is_void<EdgeTy>::value) {
-      edgeData = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
+      uint32_t* edgeDataPointer = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
                                  PROT_READ, MAP_PRIVATE, fd, edgeDataOffset);
-      if (edgeData == nullptr) {
+      if (edgeDataPointer == nullptr) {
         GALOIS_SYS_DIE("failed to mmap edge data");
       }
-      mappings.push_back({edgeData, numEdges * sizeof(uint32_t)});
+      mappings.push_back({edgeDataPointer, numEdges * sizeof(uint32_t)});
+      edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(uint32_t));
     }
 
     // file done, close it
