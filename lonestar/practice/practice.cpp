@@ -1,4 +1,4 @@
-#include "galois/graphs/ASYNCB_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
 #include "galois/graphs/Graph.h"
 #include "galois/Galois.h"
 #include "llvm/Support/CommandLine.h"
@@ -15,7 +15,7 @@ static cll::opt<unsigned int>
     startNode("startNode",
               cll::desc("Node to start search from (default value 0)"),
               cll::init(0));
-using Graph = galois::graphs::ASYNC_CSR_Graph<uint32_t, uint32_t>::with_no_lockable<true>::type;
+using Graph = galois::graphs::OnDemand_CSR_Graph<uint32_t, uint32_t>::with_no_lockable<true>::type;
 using GNode = Graph::GraphNode;
 //using Graph = galois::graphs::LC_CSR_Graph<unsigned, unsigned>::with_no_lockable<true>::type;
 
@@ -33,21 +33,23 @@ int main(int argc, char** argv)
         GNode curNode = *ii;
         graph.getData(curNode);
 
-        /*for (auto ne : graph.edges(ii)) {
+        std::cout << "TEST!!!!!!!!!!!\n";
+        for (auto ne : graph.edges(*ii)) {
             GNode neigh = graph.getEdgeDst(ne);
             auto ddata = graph.getEdgeData(ne);
             std::cout << " ," << neigh << ":" << ddata <<",";
         }
-        */
         std::cout << std::endl;
     }
 
+    /*
     for (auto ii = graph.begin(), ei = graph.end();
             ii != ei; ii++) {
         std::cout << "Current Node: " << *ii << std::endl;
         //GNode = neigh = graph.getEdgeDst(ne);
         GNode curNode = *ii;
         graph.getData(curNode);
+        */
 
         /*for (auto ne : graph.edges(ii)) {
             GNode neigh = graph.getEdgeDst(ne);
@@ -55,8 +57,10 @@ int main(int argc, char** argv)
             std::cout << " ," << neigh << ":" << ddata <<",";
         }
         */
+/*
         std::cout << std::endl;
     }
+    */
     //graph.getData(0);
     //while (true) sleep(1);
 

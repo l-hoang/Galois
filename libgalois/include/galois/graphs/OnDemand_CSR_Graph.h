@@ -17,8 +17,8 @@
  * Documentation, or loss or inaccuracy of data of any kind.
  */
 
-#ifndef GALOIS_GRAPH__ASYNC_CSR_Graph_H
-#define GALOIS_GRAPH__ASYNC_CSR_Graph_H
+#ifndef GALOIS_GRAPH__OnDemand_CSR_Graph_H
+#define GALOIS_GRAPH__OnDemand_CSR_Graph_H
 
 #include "galois/Galois.h"
 #include "galois/graphs/OfflineGraph.h"
@@ -45,7 +45,7 @@ template <typename NodeTy, typename EdgeTy, bool HasNoLockable = false,
           bool UseNumaAlloc =
               false, // true => numa-blocked, false => numa-interleaved
           bool HasOutOfLineLockable = false, typename FileEdgeTy = EdgeTy>
-class ASYNC_CSR_Graph :
+class OnDemand_CSR_Graph :
   //! [doxygennuma]
   private boost::noncopyable,
   private internal::LocalIteratorFeature<UseNumaAlloc>,
@@ -56,26 +56,26 @@ public:
 
   template <bool _has_id>
   struct with_id {
-    typedef ASYNC_CSR_Graph type;
+    typedef OnDemand_CSR_Graph type;
   };
 
   template <typename _node_data>
   struct with_node_data {
-    typedef ASYNC_CSR_Graph<_node_data, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OnDemand_CSR_Graph<_node_data, EdgeTy, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
 
   template <typename _edge_data>
   struct with_edge_data {
-    typedef ASYNC_CSR_Graph<NodeTy, _edge_data, HasNoLockable, UseNumaAlloc,
+    typedef OnDemand_CSR_Graph<NodeTy, _edge_data, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
 
   template <typename _file_edge_data>
   struct with_file_edge_data {
-    typedef ASYNC_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OnDemand_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, _file_edge_data>
         type;
   };
@@ -83,31 +83,31 @@ public:
   //! If true, do not use abstract locks in graph
   template <bool _has_no_lockable>
   struct with_no_lockable {
-    typedef ASYNC_CSR_Graph<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
+    typedef OnDemand_CSR_Graph<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
   template <bool _has_no_lockable>
   using _with_no_lockable =
-      ASYNC_CSR_Graph<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
+      OnDemand_CSR_Graph<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
                    HasOutOfLineLockable, FileEdgeTy>;
 
   //! If true, use NUMA-aware graph allocation
   template <bool _use_numa_alloc>
   struct with_numa_alloc {
-    typedef ASYNC_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
+    typedef OnDemand_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
   template <bool _use_numa_alloc>
   using _with_numa_alloc =
-      ASYNC_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
+      OnDemand_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
                    HasOutOfLineLockable, FileEdgeTy>;
 
   //! If true, store abstract locks separate from nodes
   template <bool _has_out_of_line_lockable>
   struct with_out_of_line_lockable {
-    typedef ASYNC_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OnDemand_CSR_Graph<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
                          _has_out_of_line_lockable, FileEdgeTy>
         type;
   };
@@ -123,7 +123,6 @@ protected:
 
   int fd; // open file descriptor for reads later
 
-  galois::DynamicBitSet loadStatus; // maintain unloaded/loading status.
   galois::DynamicBitSet completeStatus;// maintain complete status.
 
   // destinations and index data comes directly from mmap'd disk
@@ -193,9 +192,9 @@ protected:
   GraphNode getNode(size_t n) { return n; }
 
 public:
-  ASYNC_CSR_Graph(ASYNC_CSR_Graph&& rhs) = default;
-  ASYNC_CSR_Graph()                     = default;
-  ASYNC_CSR_Graph& operator=(ASYNC_CSR_Graph&&) = default;
+  OnDemand_CSR_Graph(OnDemand_CSR_Graph&& rhs) = default;
+  OnDemand_CSR_Graph()                     = default;
+  OnDemand_CSR_Graph& operator=(OnDemand_CSR_Graph&&) = default;
 
   /**
    * Accesses the "prefix sum" of this graph; takes advantage of the fact
@@ -211,7 +210,7 @@ public:
   uint64_t operator[](uint64_t n) { return *(edge_end(n)); }
 
 
-  ASYNC_CSR_Graph(const std::string& fName) : fName(fName){
+  OnDemand_CSR_Graph(const std::string& fName) : fName(fName){
     // use offline graph for metadata things
     galois::graphs::OfflineGraph g(fName);
     numNodes = g.size();
@@ -247,7 +246,7 @@ public:
       edgeIndData.allocateBlocked(numNodes);
       edgeDst.allocateBlocked(numEdges);
       edgeData.allocateBlocked(numEdges);
-      this->outOfLineAllocateBlocked(numNodes, false);
+      //this->outOfLineAllocateBlocked(numNodes, false);
     } else {
       nodeData.allocateInterleaved(numNodes);
       edgeIndData.allocateInterleaved(numNodes);
@@ -267,11 +266,10 @@ public:
       GALOIS_DIE("Failed to read edge index array.");
     }
 
-    loadStatus.resize(numNodes);
     completeStatus.resize(numNodes);
   }
 
-  ~ASYNC_CSR_Graph() {
+  ~OnDemand_CSR_Graph() {
     // file done, close it
     close(fd);
   }
@@ -279,12 +277,7 @@ public:
   // TODO revise this
   node_data_reference getData(GraphNode N,
                               MethodFlag mflag = MethodFlag::WRITE) {
-    // galois::runtime::checkWrite(mflag, false);
-    if (!completeStatus.test(N) && loadStatus.test(N)) {
-    // Loading request is done, but not yet complete.
-    // just skip.
-      // TODO add a busy wait
-    } else if (!completeStatus.test(N) && !loadStatus.test(N)) {
+    if (!completeStatus.test(N)) {
     // Loading request does not start yet.
     // should fill neighbor index array, neighbor array, neighbor data array.
     // Each request requires respective struct aiocb.
@@ -292,41 +285,47 @@ public:
     // we can improve implementations.)
 
       /* Phase 1: read corresponding edge index array */
-      struct aiocb eDestAiocb;
-      bzero((char *)(&eDestAiocb), sizeof(struct aiocb));
-      eDestAiocb.aio_fildes = fd;
-      eDestAiocb.aio_offset = edgeDestOffset;
+      size_t nBytes;
+      ssize_t readByte;
       if (N == 0) {
           // Phase 1 should be initialized at the first phase,
           // since in order to update edge destination array,
           // we should know edge index range.
-          eDestAiocb.aio_nbytes = edgeIndData[0]*sizeof(uint32_t);
-          eDestAiocb.aio_buf = &edgeDst[0];
-      //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
-      //    "0" << ", file offset:" << eDestAiocb.aio_offset <<"\n";
-      //
-      //    std::cout << N << " >>\n";
-      //    std::cout << edgeDst[0] << "\n";
+          nBytes = edgeIndData[0]*sizeof(uint32_t);
+          readByte = pread(fd, &edgeDst[0], nBytes, edgeDestOffset);
       } else {
-          eDestAiocb.aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
-          eDestAiocb.aio_buf = &edgeDst[edgeIndData[N-1]];
-          eDestAiocb.aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
+          nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
+          readByte = pread(fd, &edgeDst[edgeIndData[N-1]],
+                        nBytes, edgeDestOffset+(edgeIndData[N-1]*sizeof(uint32_t)));
+      }
+      assert(readByte == nBytes);
 
-      //std::cout << "buf size: " << eDestAiocb.aio_nbytes << ", dest array index: " <<
-      //    edgeIndData[N-1] << ", file offset:" << eDestAiocb.aio_offset <<"\n";
+      for (int i = 0; i < nBytes/sizeof(uint32_t); i++)
+          if (N == 0)
+            printf("%d, Destination Node: %d \n", i, edgeDst[i]);
+          else
+            printf("%d, Destination Node: %d \n", i, edgeDst[edgeIndData[N-1]]);
+
+      /* Phase 2: read corresponding edge weight if exists */
+      if (typeid(EdgeTy) != typeid(void)) {
+          std::cout << "Type exists\n";
+          if (N == 0) {
+              nBytes = edgeIndData[0]*sizeof(EdgeTy);
+              readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
+          } else {
+              nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(EdgeTy);
+              readByte = pread(fd, &edgeData[edgeIndData[N-1]],
+                      nBytes, edgeDataOffset+(edgeIndData[N-1]*sizeof(EdgeTy)));
+          }
+          assert(readByte == nBytes);
+
+          for (int i = 0; i < nBytes/sizeof(EdgeTy); i++)
+              if (N == 0)
+                  printf("%d, EdgeData: %d \n", i, edgeData[i]);
+              else
+                  printf("%d, EdgeData: %d \n", i, edgeData[edgeIndData[N-1]]);
 
       }
-
-      if(aio_read(&eDestAiocb) < 0) 
-         printf("aio_read is failed\n");
-      while (aio_error(&eDestAiocb) == EINPROGRESS) ;
-      int ret;
-      if ((ret = aio_return(&eDestAiocb)) > 0) {
-          printf("Ret[%d] \n", ret);
-          for (int i = 0; i < eDestAiocb.aio_nbytes/sizeof(uint32_t); i++)
-              printf("%d, Buff[%d] \n", i, *((uint32_t *) eDestAiocb.aio_buf+i));
-      }
-      loadStatus.set(N);
     } else {
       NodeInfo& NI = nodeData[N];
       acquireNode(N, mflag);
