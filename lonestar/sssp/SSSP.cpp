@@ -30,6 +30,9 @@
 #include "Lonestar/BoilerPlate.h"
 #include "Lonestar/BFS_SSSP.h"
 
+#include "galois/graphs/MMAP_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
+
 #include <iostream>
 
 namespace cll = llvm::cl;
@@ -85,8 +88,13 @@ static cll::opt<Algo>
 // typedef galois::graphs::LC_InlineEdge_Graph<std::atomic<unsigned int>,
 // uint32_t>::with_no_lockable<true>::type::with_numa_alloc<true>::type Graph;
 //! [withnumaalloc]
-using Graph = galois::graphs::LC_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+//using Graph = galois::graphs::LC_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+//    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+using Graph = galois::graphs::OnDemand_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
     with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+//using Graph = galois::graphs::MMAP_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+//    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+
 //! [withnumaalloc]
 typedef Graph::GraphNode GNode;
 
@@ -287,7 +295,7 @@ void topoAlgo(Graph& graph, const GNode& source) {
     ++rounds;
     changed.reset();
 
-    galois::do_all(galois::iterate(graph),
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
                    [&](const GNode& n) {
                      const auto& sdata = graph.getData(n);
 
@@ -317,7 +325,7 @@ void topoTileAlgo(Graph& graph, const GNode& source) {
 
   graph.getData(source) = 0;
 
-  galois::do_all(galois::iterate(graph),
+  galois::do_all(galois::iterate(graph.begin(), graph.end()),
                  [&](const GNode& n) {
                    SSSP::pushEdgeTiles(
                        tiles, graph, n,
@@ -360,11 +368,11 @@ int main(int argc, char** argv) {
   galois::SharedMemSys G;
   LonestarStart(argc, argv, name, desc, url);
 
-  Graph graph;
   GNode source, report;
 
   std::cout << "Reading from file: " << filename << std::endl;
-  galois::graphs::readGraph(graph, filename);
+  //galois::graphs::readGraph(graph, filename);
+  Graph graph(filename);
   std::cout << "Read " << graph.size() << " nodes, " << graph.sizeEdges()
             << " edges" << std::endl;
 
@@ -398,9 +406,8 @@ int main(int argc, char** argv) {
         << "WARNING: Do not expect the default to be good for your graph.\n";
   }
 
-  galois::do_all(galois::iterate(graph),
+  galois::do_all(galois::iterate(graph.begin(), graph.end()),
                  [&graph](GNode n) { graph.getData(n) = SSSP::DIST_INFINITY; });
-
   graph.getData(source) = 0;
 
   std::cout << "Running " << ALGO_NAMES[algo] << " algorithm" << std::endl;
@@ -450,6 +457,9 @@ int main(int argc, char** argv) {
   std::cout << "Node " << reportNode << " has distance "
             << graph.getData(report) << "\n";
 
+  for (auto i = graph.begin(); i < graph.end(); i++) {
+    galois::gPrint(*i , " ", graph.getData(*i).load(), "\n");
+  }
   if (!skipVerify) {
     if (SSSP::verify(graph, source)) {
       std::cout << "Verification successful.\n";
