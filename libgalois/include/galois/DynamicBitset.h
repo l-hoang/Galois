@@ -196,17 +196,38 @@ public:
    * Set a bit in the bitset.
    *
    * @param index Bit to set
+   * @returns true if set success, false if already 1 or someone else sets it
    */
-  void set(size_t index) {
+  bool set(size_t index) {
     size_t bit_index    = index / bits_uint64;
     uint64_t bit_offset = 1;
     bit_offset <<= (index % bits_uint64);
     if ((bitvec[bit_index] & bit_offset) == 0) { // test and set
+      //galois::gPrint("need to set\n");
       size_t old_val = bitvec[bit_index];
-      while (!bitvec[bit_index].compare_exchange_weak(
-          old_val, old_val | bit_offset, std::memory_order_relaxed))
-        ;
+      bool result = false;
+
+      while (!result) {
+        //galois::gPrint("while loop\n");
+        result = !bitvec[bit_index].compare_exchange_weak(old_val,
+                   old_val | bit_offset, std::memory_order_relaxed);
+        // my swap success
+        if (result == true) {
+          return result;
+        } else {
+          // check if it's set: if so, return false
+          if ((old_val & bit_offset) == 1) {
+            return false;
+          }
+        }
+      }
+    } else {
+      // already set to 1
+      return false;
     }
+    // shouldn't even get here
+    GALOIS_DIE("shouldn't get here\n");
+    return false;
   }
 
   void reset(size_t index) {
