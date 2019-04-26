@@ -29,7 +29,6 @@
 #include <thread>
 #include <csignal>
 #include <type_traits>
-#include <aio.h>
 
 namespace galois {
 namespace graphs {
@@ -123,7 +122,8 @@ protected:
 
   int fd; // open file descriptor for reads later
 
-  galois::DynamicBitSet completeStatus;// maintain complete status.
+  galois::DynamicBitSet loadStatus; // maintain complete status.
+  galois::DynamicBitSet completeStatus; // maintain complete status.
 
   // destinations and index data comes directly from mmap'd disk
   using EdgeIndData = LargeArray<uint64_t>;
@@ -193,7 +193,7 @@ protected:
 
 public:
   OnDemand_CSR_Graph(OnDemand_CSR_Graph&& rhs) = default;
-  OnDemand_CSR_Graph()                     = default;
+  OnDemand_CSR_Graph()                         = default;
   OnDemand_CSR_Graph& operator=(OnDemand_CSR_Graph&&) = default;
 
   /**
@@ -219,11 +219,10 @@ public:
 
     //std::cout << "Num of nodes: " << numNodes << ", numEdges: " << numEdges << ", edgeSize: " << edgeSize << std::endl;
 
-    // mmap the edge destinations and the edge indices
     fd = open(fName.c_str(), O_RDONLY);
     if (fd == -1) GALOIS_SYS_DIE("failed opening ", "'", fName, "', MMAP CSR");
 
-    // each array size 
+    // each array size
     edgeIndexSize = numNodes * sizeof(uint64_t);
     edgeDestSize = numEdges * sizeof(uint32_t);
     edgeDataSize = numEdges * sizeof(EdgeTy);
@@ -235,10 +234,6 @@ public:
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
-    // move file descriptor to node index offsets array.
-    if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
-      GALOIS_DIE("Failed to move file pointer to edge index array.");
-    }
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
@@ -246,7 +241,7 @@ public:
       edgeIndData.allocateBlocked(numNodes);
       edgeDst.allocateBlocked(numEdges);
       edgeData.allocateBlocked(numEdges);
-      //this->outOfLineAllocateBlocked(numNodes, false);
+      this->outOfLineAllocateBlocked(numNodes);
     } else {
       nodeData.allocateInterleaved(numNodes);
       edgeIndData.allocateInterleaved(numNodes);
@@ -259,6 +254,11 @@ public:
       nodeData.constructAt(n);
     }
 
+    // move file descriptor to node index offsets array.
+    if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
+      GALOIS_DIE("Failed to move file pointer to edge index array.");
+    }
+
     // read indices for nodes (prefix sum)
     // TODO read may not read everything at once; need to put this in a while
     // loop
@@ -266,6 +266,7 @@ public:
       GALOIS_DIE("Failed to read edge index array.");
     }
 
+    loadStatus.resize(numNodes);
     completeStatus.resize(numNodes);
   }
 
@@ -274,63 +275,8 @@ public:
     close(fd);
   }
 
-  // TODO revise this
   node_data_reference getData(GraphNode N,
                               MethodFlag mflag = MethodFlag::WRITE) {
-    if (!completeStatus.test(N)) {
-    // Loading request does not start yet.
-    // should fill neighbor index array, neighbor array, neighbor data array.
-    // Each request requires respective struct aiocb.
-    // (NOTE: I don't believe it would be the best option, but
-    // we can improve implementations.)
-
-      /* Phase 1: read corresponding edge index array */
-      size_t nBytes;
-      ssize_t readByte;
-      if (N == 0) {
-          // Phase 1 should be initialized at the first phase,
-          // since in order to update edge destination array,
-          // we should know edge index range.
-          nBytes = edgeIndData[0]*sizeof(uint32_t);
-          readByte = pread(fd, &edgeDst[0], nBytes, edgeDestOffset);
-      } else {
-          nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
-          readByte = pread(fd, &edgeDst[edgeIndData[N-1]],
-                        nBytes, edgeDestOffset+(edgeIndData[N-1]*sizeof(uint32_t)));
-      }
-      assert(readByte == nBytes);
-
-      for (int i = 0; i < nBytes/sizeof(uint32_t); i++)
-          if (N == 0)
-            printf("%d, Destination Node: %d \n", i, edgeDst[i]);
-          else
-            printf("%d, Destination Node: %d \n", i, edgeDst[edgeIndData[N-1]]);
-
-      /* Phase 2: read corresponding edge weight if exists */
-      if (typeid(EdgeTy) != typeid(void)) {
-          std::cout << "Type exists\n";
-          if (N == 0) {
-              nBytes = edgeIndData[0]*sizeof(EdgeTy);
-              readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
-          } else {
-              nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(EdgeTy);
-              readByte = pread(fd, &edgeData[edgeIndData[N-1]],
-                      nBytes, edgeDataOffset+(edgeIndData[N-1]*sizeof(EdgeTy)));
-          }
-          assert(readByte == nBytes);
-
-          for (int i = 0; i < nBytes/sizeof(EdgeTy); i++)
-              if (N == 0)
-                  printf("%d, EdgeData: %d \n", i, edgeData[i]);
-              else
-                  printf("%d, EdgeData: %d \n", i, edgeData[edgeIndData[N-1]]);
-
-      }
-    } else {
-      NodeInfo& NI = nodeData[N];
-      acquireNode(N, mflag);
-      return NI.getData();
-    }
     NodeInfo& NI = nodeData[N];
     acquireNode(N, mflag);
     return NI.getData();
@@ -367,7 +313,59 @@ public:
     return local_iterator(this->localEnd(numNodes));
   }
 
+  void load_edges(GraphNode N) {
+     //galois::gPrint("load ", N, "\n");
+    // make sure edges are loaded
+    if (!completeStatus.test(N)) {
+      // only one thing should read at a time; get "lock" by checking load status
+      bool claim = loadStatus.set(N);
+      if (claim) {
+        // I claimed it, so I have to load it
+        // Phase 1: read corresponding edge index array
+        size_t nBytes;
+        size_t readByte;
+        if (N == 0) {
+            nBytes = edgeIndData[0] * sizeof(uint32_t);
+            readByte = pread(fd, &edgeDst[0], nBytes, edgeDestOffset);
+        } else {
+            nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(uint32_t);
+            readByte = pread(fd, &edgeDst[edgeIndData[N-1]],
+                          nBytes, edgeDestOffset+(edgeIndData[N-1]*sizeof(uint32_t)));
+        }
+
+        GALOIS_ASSERT(readByte == nBytes);
+
+        //for (int i = 0; i < nBytes/sizeof(uint32_t); i++)
+        //    if (N == 0) printf("%d, Destination Node: %d \n", i, edgeDst[i]);
+        //    else printf("%d, Destination Node: %d \n", i, edgeDst[edgeIndData[N-1] + i]);
+
+        // Phase 2: read corresponding edge weight if exists
+        if (typeid(EdgeTy) != typeid(void)) {
+            std::cout << "Type exists\n";
+            if (N == 0) {
+                nBytes = edgeIndData[0]*sizeof(EdgeTy);
+                readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
+            } else {
+                nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(EdgeTy);
+                readByte = pread(fd, &edgeData[edgeIndData[N-1]],
+                        nBytes, edgeDataOffset+(edgeIndData[N-1]*sizeof(EdgeTy)));
+            }
+            assert(readByte == nBytes);
+            //for (int i = 0; i < nBytes/sizeof(EdgeTy); i++)
+            //    if (N == 0) printf("%d, EdgeData: %d \n", i, edgeData[i]);
+            //    else printf("%d, EdgeData: %d \n", i, edgeData[edgeIndData[N-1]]);
+
+        }
+        completeStatus.set(N);
+      } else {
+        // spin lock until complete status is set i.e. node is loaded
+        while (!completeStatus.test(N));
+      }
+    }
+  }
+
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
+    load_edges(N);
     acquireNode(N, mflag);
     if (galois::runtime::shouldLock(mflag)) {
       for (edge_iterator ii = raw_begin(N), ee = raw_end(N); ii != ee; ++ii) {
@@ -378,25 +376,27 @@ public:
   }
 
   edge_iterator edge_end(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
+    load_edges(N);
     acquireNode(N, mflag);
     return raw_end(N);
   }
 
   runtime::iterable<NoDerefIterator<edge_iterator>>
   edges(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
+    load_edges(N);
     return internal::make_no_deref_range(edge_begin(N, mflag),
                                          edge_end(N, mflag));
   }
 
-  runtime::iterable<NoDerefIterator<edge_iterator>>
-  out_edges(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    return edges(N, mflag);
-  }
-
   void deallocate() {
-    // node edge data
     nodeData.destroy();
     nodeData.deallocate();
+    edgeIndData.destroy();
+    edgeIndData.deallocate();
+    edgeDst.destroy();
+    edgeDst.deallocate();
+    edgeData.destroy();
+    edgeData.deallocate();
   }
 
   /**
