@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
 
 #define NO_THREADS 5
 #define SIG_AIO SIGRTMIN+1
@@ -16,11 +17,12 @@ int fd;
 //void read_handler(sigval_t sigval)
 void read_handler(int s, siginfo_t * info, void *ctx)
 {
-    printf("AIO handler is called\n");
+    printf("AIO handler is called: %d\n", syscall(__NR_gettid));
 
     struct aiocb *req;
 
     req = (struct aiocb *)info->si_value.sival_ptr;
+    printf("Requested address: %p\n", req);
 
     if (aio_error (req) == 0) {
         int ret = aio_return(req);
@@ -61,6 +63,26 @@ void *read_char(void *char_ptr)
 
     int ret = aio_read(&cb);
 
+    struct aiocb cb2;
+    bzero(&cb2, sizeof(cb2));
+
+    char_no++;
+    //cb.aio_fildes = open("input", O_RDONLY);//fd;
+    cb2.aio_fildes = fd;
+    cb2.aio_buf = malloc(BUF_SIZE);
+    cb2.aio_nbytes = BUF_SIZE;
+    cb2.aio_offset = char_no*sizeof(char);
+    //cb.aio_sigevent.sigev_notify = SIGEV_THREAD;
+    cb2.aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+    cb2.aio_sigevent.sigev_signo = SIG_AIO;
+    //cb.aio_sigevent.sigev_notify_function = read_handler;
+    cb2.aio_sigevent.sigev_notify_attributes = NULL;
+    cb2.aio_sigevent.sigev_value.sival_ptr = &cb2;
+
+    printf("Thread! offset:%d\n", char_no*sizeof(char));
+
+    ret = aio_read(&cb2);
+
     /*
     while (aio_error(&cb) == EINPROGRESS) ;
     //cb.aio_sigevent.sigev_value.
@@ -85,7 +107,7 @@ int main(void)
     }
 
     // [NOTE] IT iS NECESSARY! So, blocking AIO is preferable!
-    for (int i = 0; i < 5; i ++) sleep(1);
+    for (int i = 0; i < 10; i ++) sleep(1);
     pthread_exit(NULL);
     return 0;
 }

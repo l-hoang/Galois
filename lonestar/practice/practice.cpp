@@ -27,20 +27,21 @@ int main(int argc, char** argv)
     std::cout << "Before reading graph " << filename << "\n";
     Graph graph(filename);
 
-    for (auto ii = graph.begin(), ei = graph.end();
-            ii != ei; ii++) {
-        std::cout << "Current Node: " << *ii << std::endl;
-        //GNode = neigh = graph.getEdgeDst(ne);
-        GNode curNode = *ii;
-        graph.getData(curNode);
+    //for (auto ii = graph.begin(), ei = graph.end();
+    //        ii != ei; ii++) {
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
+            [&](GNode n) {
+                //GNode = neigh = graph.getEdgeDst(ne);
+                graph.getData(n);
 
-        for (auto ne : graph.edges(*ii)) {
-            GNode neigh = graph.getEdgeDst(ne);
-            auto ddata = graph.getEdgeData(ne);
-            std::cout << "Neigh, " << neigh << ": Data," << ddata <<",";
-        }
-        std::cout << std::endl;
-    }
+                std::cout << "Current Node: " << n << std::endl;
+                for (auto ne : graph.edges(n)) {
+                    GNode neigh = graph.getEdgeDst(ne);
+                    auto ddata = graph.getEdgeData(ne);
+                    std::cout << "Neigh, " << neigh << ": Data," << ddata <<",";
+                }
+                std::cout << std::endl;
+            });
 
     /*
     for (auto ii = graph.begin(), ei = graph.end();
@@ -62,7 +63,8 @@ int main(int argc, char** argv)
     }
     */
     //graph.getData(0);
-    while (true) sleep(1);
+//    while (true) sleep(1);
+    for (int i = 0; i < 10; i++) sleep(1);
 
 
     return 0;
