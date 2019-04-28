@@ -35,7 +35,7 @@
 
 #define SIG_AIO SIGRTMIN+1
 
-#define AIO_VEC_SIZE 30
+#define AIO_VEC_SIZE 1
 
 #ifndef sigev_notify_thread_id
 #define sigev_notify_thread_id _sigev_un._tid
@@ -47,35 +47,53 @@ namespace graphs {
 static thread_local unsigned int aioReqIdx;
 
 //void read_handler(sigval_t sigval)
-void readDstCallback(int s, siginfo_t * info, void *ctx)
-{
-    printf("AIO handler is called\n");
-    struct aiocb *req;
-    req = (struct aiocb *)info->si_value.sival_ptr;
-    printf("\n\nRequested aio: %p\n", req);
-    if (aio_error (req) == 0) {
-        int ret = aio_return(req);
-        printf("Req offset: %d, size: %d\n", req->aio_offset, req->aio_nbytes);
-        printf("results: %d\n", *(uint32_t *) req->aio_buf);
-    }
-    else {
-        printf("Fail to get return\n");
-    }
-}
 
 void readDstThCallback(sigval_t sig)
 {
-    printf("AIO handler is called\n");
+    //printf("AIO handler is called\n");
     struct aiocb *req;
     req = (struct aiocb *) sig.sival_ptr;
     if (aio_error (req) == 0) {
         int ret = aio_return(req);
-        printf("Req offset: %d, size: %d\n", req->aio_offset, req->aio_nbytes);
-        printf("results: %d\n", *(uint32_t *) req->aio_buf);
+        //printf("Req offset: %d, size: %d\n", req->aio_offset, req->aio_nbytes);
+        //printf("results: %d\n", *(uint32_t *) req->aio_buf);
+    }
+    else {
+        //printf("Fail to get return\n");
+    }
+}
+
+void readDstCallback(int s, siginfo_t * info, void *ctx)
+{
+    struct aiocb *aioReq;
+    galois::DynamicBitSet *complStats;
+    int curNode;
+
+    struct aiocb_with_info {
+        struct aiocb aioReq;
+        int curNode;
+        galois::DynamicBitSet *complStats;
+    };
+
+    struct aiocb_with_info *req = (struct aiocb_with_info *)
+                                       info->si_value.sival_ptr;
+
+    aioReq = &(req->aioReq);
+    complStats = req->complStats;
+    curNode = req->curNode;
+    //printf("\n\nRequested aio: %p\n", aioReq);
+    //printf("Requested complSets: %p\n", complStats);
+    //printf("\nRequested node: %d\n", curNode);
+    if (aio_error (aioReq) == 0) {
+        int ret = aio_return(aioReq);
+        //printf("Req offset: %d, size: %d\n", aioReq->aio_offset, aioReq->aio_nbytes);
+        //printf("results: %d\n", *(uint32_t *) aioReq->aio_buf);
     }
     else {
         printf("Fail to get return\n");
     }
+
+    complStats->set(curNode);
 }
 
 /**
@@ -156,6 +174,12 @@ public:
         type;
   };
 
+  struct aiocb_with_info {
+      struct aiocb aioReq;
+      int curNode;
+      galois::DynamicBitSet *complStats;
+  };
+
 protected:
   typedef internal::NodeInfoBaseTypes<NodeTy,
                                       !HasNoLockable && !HasOutOfLineLockable>
@@ -186,7 +210,7 @@ public:
   typedef iterator const_iterator;
   typedef iterator local_iterator;
   typedef iterator const_local_iterator;
-  typedef galois::gstl::Vector<struct aiocb> VecAioCbTy;
+  typedef galois::gstl::Vector<struct aiocb_with_info> VecAioCbTy;
   typedef galois::substrate::PerThreadStorage<VecAioCbTy> ThreadLocalData;
 
 protected:
@@ -236,7 +260,6 @@ protected:
   size_t getId(GraphNode N) { return N; }
 
   GraphNode getNode(size_t n) { return n; }
-
 public:
   ASYNC_CSR_Graph(ASYNC_CSR_Graph&& rhs) = default;
   ASYNC_CSR_Graph()                     = default;
@@ -263,7 +286,7 @@ public:
     numEdges = g.sizeEdges();
     edgeSize = g.edgeSize();
 
-    std::cout << "Signal is set\n";
+    // Set signal
     act.sa_sigaction = readDstCallback;
     act.sa_flags = SA_SIGINFO;
     sigemptyset(&act.sa_mask);
@@ -337,10 +360,11 @@ public:
     return NI.getData();
   }
 
-  void loadEdges(GraphNode N) {
+  bool loadEdges(GraphNode N) {
+      bool result = false;
       auto& aioCbVec = *thLocDat.getLocal();
       if (!aioCbVec.size()) {
-        std::cout << "\nClear once ***\n";
+        // Initialize thread local vector.
         aioCbVec.clear();
         aioCbVec.resize(AIO_VEC_SIZE);
       }
@@ -351,15 +375,15 @@ public:
             // I claimed it, so I have to load it.
             // Read corresponding edge index array.
             // Request aio.
-            //struct aiocb *eDestAioCb = (struct aiocb *)malloc(sizeof(struct aiocb));
-            //
-            std::cout << "aioReqIdx: " << aioReqIdx << "\n";
-            struct aiocb* eDestAioCb = &aioCbVec[aioReqIdx];
-            std::cout << "\n aioReqAddr: " << eDestAioCb << "\n";
+            struct aiocb* eDestAioCb = &(aioCbVec[aioReqIdx].aioReq);
+            // Also store the current node.
+            aioCbVec[aioReqIdx].curNode = N;
+            aioCbVec[aioReqIdx].complStats = &completeStatus;
+
             int ret;
             if ((ret = aio_error(eDestAioCb)) == EINPROGRESS) {
                // In this case, just skip computation.
-               return ;
+               return result;
             }
             memset(eDestAioCb, 0ul, sizeof(struct aiocb));
             eDestAioCb->aio_fildes = fd;
@@ -374,19 +398,13 @@ public:
                 eDestAioCb->aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
             }
 
-            std::cout << "offset: " << eDestAioCb->aio_offset << ", bytes: " <<
-                   eDestAioCb->aio_nbytes << "\n";
+            //std::cout << "offset: " << eDestAioCb->aio_offset << ", bytes: " <<
+            //       eDestAioCb->aio_nbytes << "\n";
 
             eDestAioCb->aio_sigevent.sigev_notify = SIGEV_SIGNAL;
             eDestAioCb->aio_sigevent.sigev_signo = SIG_AIO;
-            //eDestAioCb.aio_sigevent.sigev_notify = SIGEV_THREAD_ID;
-            //eDestAioCb.aio_sigevent.sigev_notify_function = readDstThCallback;
-            //eDestAioCb.aio_sigevent.sigev_notify_thread_id = syscall(__NR_gettid);
-            //std::cout << "Thread id :" << syscall(__NR_gettid);
-            //eDestAioCb.aio_sigevent.sigev_notify_thread_id = gettid();
-            //eDestAioCb.aio_sigevent._sigev_un._tid = syscall(__NR_gettid);
             eDestAioCb->aio_sigevent.sigev_notify_attributes = NULL;
-            eDestAioCb->aio_sigevent.sigev_value.sival_ptr = eDestAioCb;
+            eDestAioCb->aio_sigevent.sigev_value.sival_ptr = &(aioCbVec[aioReqIdx]);
 
             if (aioReqIdx == AIO_VEC_SIZE) aioReqIdx = 0;
             else aioReqIdx ++;
@@ -396,8 +414,12 @@ public:
             // We don't need to do anything in this case.
             // When completion signal comes, completeStatus will be set.
           }
+      } else {
+        //std::cout << "Already processed!\n";
+        result= true;
       }
-      std::cout << "loadEdges is finished\n";
+
+      return result;
   }
 
   // note unlike LC CSR this edge data is immutable
@@ -432,7 +454,6 @@ public:
   }
 
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    loadEdges(N);
     acquireNode(N, mflag);
     if (galois::runtime::shouldLock(mflag)) {
       for (edge_iterator ii = raw_begin(N), ee = raw_end(N); ii != ee; ++ii) {
@@ -443,7 +464,6 @@ public:
   }
 
   edge_iterator edge_end(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    loadEdges(N);
     acquireNode(N, mflag);
     return raw_end(N);
   }
@@ -468,6 +488,8 @@ public:
     edgeDst.deallocate();
     edgeData.destroy();
     edgeData.deallocate();
+    thLocDat.destry();
+    thLocDat.deallocate();
   }
 
   /**
