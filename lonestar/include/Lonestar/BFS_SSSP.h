@@ -236,7 +236,7 @@ struct BFS_SSSP {
     }
 
     std::atomic<size_t> notVisited(0);
-    galois::do_all(galois::iterate(graph), [&notVisited, &graph](GNode node) {
+    galois::do_all(galois::iterate(graph.begin(), graph.end()), [&notVisited, &graph](GNode node) {
       if (graph.getData(node) >= DIST_INFINITY)
         ++notVisited;
     });
@@ -247,7 +247,7 @@ struct BFS_SSSP {
                    "strongly connected\n";
 
     std::atomic<bool> not_c(false);
-    galois::do_all(galois::iterate(graph), not_consistent(graph, not_c));
+    galois::do_all(galois::iterate(graph.begin(), graph.end()), not_consistent(graph, not_c));
 
     if (not_c) {
       std::cerr << "node found with incorrect distance\n";
@@ -255,7 +255,7 @@ struct BFS_SSSP {
     }
 
     galois::GReduceMax<Dist> m;
-    galois::do_all(galois::iterate(graph), max_dist(graph, m));
+    galois::do_all(galois::iterate(graph.begin(), graph.end()), max_dist(graph, m));
 
     std::cout << "max dist: " << m.reduce() << "\n";
 
