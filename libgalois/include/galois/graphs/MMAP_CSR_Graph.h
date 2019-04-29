@@ -197,6 +197,10 @@ public:
    */
   uint64_t operator[](uint64_t n) { return *(edge_end(n)); }
 
+  bool load_edges(GraphNode N) {
+    return true;
+  }
+
   MMAP_CSR_Graph(const std::string& filename) {
     // use offline graph for metadata things
     galois::graphs::OfflineGraph g(filename);
