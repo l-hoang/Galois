@@ -176,6 +176,7 @@ public:
   }
 
   OfflineGraphWrapper(const std::string& filename) : g{filename} {
+    galois::gInfo("Graph: OfflineGraph");
     // use offline graph 
     numNodes = g.size();
     numEdges = g.sizeEdges();

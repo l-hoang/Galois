@@ -202,6 +202,7 @@ public:
   }
 
   MMAP_CSR_Graph(const std::string& filename) {
+    galois::gInfo("Graph: MMAP");
     // use offline graph for metadata things
     galois::graphs::OfflineGraph g(filename);
     numNodes = g.size();

@@ -200,6 +200,7 @@ public:
   void fixEndEdge(uint32_t n, uint64_t e) { edgeIndData[n] = e; }
 
   BufferedGraphWrapper(const std::string& filename)  {
+    galois::gInfo("Graph: BufferedGraphWrapper");
     galois::graphs::BufferedGraph<EdgeTy> g;
     g.loadGraph(filename);
     numNodes = g.size();

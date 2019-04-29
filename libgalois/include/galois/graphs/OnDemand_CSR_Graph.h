@@ -210,6 +210,7 @@ public:
 
 
   OnDemand_CSR_Graph(const std::string& fName) : fName(fName){
+    galois::gInfo("Graph: OnDemand");
     // use offline graph for metadata things
     galois::graphs::OfflineGraph g(fName);
     numNodes = g.size();

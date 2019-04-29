@@ -342,6 +342,7 @@ public:
   }
 
   LC_CSR_Graph(const std::string filename) {
+    galois::gInfo("Graph: LC_CSR Direct");
     // use offline graph for metadata things
     galois::graphs::OfflineGraph og(filename);
     numNodes = og.size();
