@@ -199,6 +199,17 @@ public:
   void constructEdge(uint64_t e, uint32_t dst) { edgeDst[e] = dst; }
   void fixEndEdge(uint32_t n, uint64_t e) { edgeIndData[n] = e; }
 
+  template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
+  void constructEdgeWrap(galois::graphs::BufferedGraph<EdgeTy>& g, uint64_t b) {
+    constructEdge(b, g.edgeDestination(b), g.edgeData(b));
+  }
+
+  template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>
+  void constructEdgeWrap(galois::graphs::BufferedGraph<EdgeTy>& g, uint64_t b) {
+    constructEdge(b, g.edgeDestination(b));
+  }
+
+
   BufferedGraphWrapper(const std::string& filename)  {
     galois::gInfo("Graph: BufferedGraphWrapper");
     galois::graphs::BufferedGraph<EdgeTy> g;
@@ -232,11 +243,7 @@ public:
         auto e = g.edgeEnd(i);
         fixEndEdge(i, *e);
         while (b < e) {
-          if (!std::is_void<EdgeTy>::value) {
-            constructEdge(*b, g.edgeDestination(*b), g.edgeData(*b));
-          } else {
-            constructEdge(*b, g.edgeDestination(*b));
-          }
+          constructEdgeWrap(g, *b);
           b++;
         }
       }

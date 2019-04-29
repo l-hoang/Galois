@@ -355,7 +355,6 @@ public:
     // each array size
     size_t edgeIndexSize = numNodes * sizeof(uint64_t);
     size_t edgeDestSize = numEdges * sizeof(uint32_t);
-    size_t edgeDataSize = numEdges * sizeof(EdgeTy);
     // offsets for mapping
     size_t nodeIndexOffset = 4 * sizeof(uint64_t);
     size_t edgeDataOffset = (4 + numNodes) * sizeof(uint64_t) +
@@ -400,6 +399,8 @@ public:
     }
 
     if (!std::is_void<EdgeTy>::value) {
+      // TODO assume we only support uint32_t at the moment
+      size_t edgeDataSize = numEdges * sizeof(uint32_t);
       // move file descriptor to node index offsets array.
       if ((int)edgeDataOffset != lseek(fd, edgeDataOffset, SEEK_SET)) {
         GALOIS_DIE("Failed to move file pointer to edge data array.");

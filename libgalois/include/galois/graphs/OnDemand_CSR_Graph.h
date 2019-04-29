@@ -154,7 +154,6 @@ protected:
 
   size_t edgeIndexSize;
   size_t edgeDestSize;
-  size_t edgeDataSize;
 
   uint64_t nodeIndexOffset;
   uint64_t edgeDestOffset;
@@ -225,7 +224,6 @@ public:
     // each array size
     edgeIndexSize = numNodes * sizeof(uint64_t);
     edgeDestSize = numEdges * sizeof(uint32_t);
-    edgeDataSize = numEdges * sizeof(EdgeTy);
     // offsets for mapping
     nodeIndexOffset = 4 * sizeof(uint64_t);
     edgeDestOffset = (4 + numNodes) * sizeof(uint64_t);
@@ -233,7 +231,6 @@ public:
                               (numEdges * sizeof(uint32_t));
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
-
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
@@ -313,6 +310,28 @@ public:
     return local_iterator(this->localEnd(numNodes));
   }
 
+  template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
+  void read_edge_data(GraphNode N) {
+    size_t nBytes;
+    size_t readByte;
+
+    if (N == 0) {
+      nBytes = edgeIndData[0] * sizeof(EdgeTy);
+      readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
+    } else {
+      nBytes = (edgeIndData[N] - edgeIndData[N - 1]) * sizeof(EdgeTy);
+      readByte = pread(fd, &edgeData[edgeIndData[N - 1]],
+                       nBytes,
+                       edgeDataOffset+(edgeIndData[N - 1] * sizeof(EdgeTy)));
+    }
+    assert(readByte == nBytes);
+  }
+
+  template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>
+  void read_edge_data(GraphNode N) {
+    // do nothing
+  }
+
   bool load_edges(GraphNode N) {
     //galois::gPrint("load ", N, "\n");
     // make sure edges are loaded
@@ -336,25 +355,12 @@ public:
         GALOIS_ASSERT(readByte == nBytes);
 
         //for (int i = 0; i < nBytes/sizeof(uint32_t); i++)
-        //    if (N == 0) printf("%d, Destination Node: %d \n", i, edgeDst[i]);
-        //    else printf("%d, Destination Node: %d \n", i, edgeDst[edgeIndData[N-1] + i]);
+        //  if (N == 0) printf("%d, Destination Node: %d \n", i, edgeDst[i]);
+        //  else printf("%d, Destination Node: %d \n", i, edgeDst[edgeIndData[N-1] + i]);
 
         // Phase 2: read corresponding edge weight if exists
-        if (typeid(EdgeTy) != typeid(void)) {
-            if (N == 0) {
-                nBytes = edgeIndData[0]*sizeof(EdgeTy);
-                readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
-            } else {
-                nBytes = (edgeIndData[N]-edgeIndData[N-1])*sizeof(EdgeTy);
-                readByte = pread(fd, &edgeData[edgeIndData[N-1]],
-                        nBytes, edgeDataOffset+(edgeIndData[N-1]*sizeof(EdgeTy)));
-            }
-            assert(readByte == nBytes);
-            //for (int i = 0; i < nBytes/sizeof(EdgeTy); i++)
-            //    if (N == 0) printf("%d, EdgeData: %d \n", i, edgeData[i]);
-            //    else printf("%d, EdgeData: %d \n", i, edgeData[edgeIndData[N-1]]);
+        read_edge_data<EdgeTy>(N);
 
-        }
         completeStatus.set(N);
         assert(completeStatus.test(N));
       } else {

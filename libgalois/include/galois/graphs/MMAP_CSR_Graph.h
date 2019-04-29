@@ -201,6 +201,30 @@ public:
     return true;
   }
 
+  template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
+  void read_edge_data(int fd, size_t edgeDataOffset) {
+    size_t alignedOffset = edgeDataOffset &
+                           ~static_cast<uint64_t>(galois::substrate::allocSize() - 1);
+    size_t adjustment = edgeDataOffset - alignedOffset;
+    size_t sizeToMap = numEdges * sizeof(EdgeTy) + adjustment;
+
+    uint32_t* edgeDataPointer = (EdgeTy*)mmap(nullptr, sizeToMap,
+                               PROT_READ, MAP_PRIVATE, fd, alignedOffset);
+    mappings.push_back({edgeDataPointer, sizeToMap});
+    if ((long int)edgeDataPointer == -1) {
+      perror("edgedatapoin");
+      GALOIS_SYS_DIE("failed to mmap edge data");
+    }
+    edgeDataPointer = (uint32_t*)((char*)edgeDataPointer + adjustment);
+    edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(EdgeTy));
+  }
+
+  template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>
+  void read_edge_data(int fd, size_t edgeDataOffset) {
+    // do nothing
+  }
+
+
   MMAP_CSR_Graph(const std::string& filename) {
     galois::gInfo("Graph: MMAP");
     // use offline graph for metadata things
@@ -256,23 +280,7 @@ public:
     edgeDst = LargeArray<uint32_t>(edgeDstPointer, numEdges * sizeof(uint32_t));
 
     // edge data
-    if (!std::is_void<EdgeTy>::value) {
-      alignedOffset = edgeDataOffset &
-                      ~static_cast<uint64_t>(galois::substrate::allocSize() - 1);
-      adjustment = edgeDataOffset - alignedOffset;
-      sizeToMap = numEdges * sizeof(EdgeTy) + adjustment;
-
-      uint32_t* edgeDataPointer = (EdgeTy*)mmap(nullptr, sizeToMap,
-                                 PROT_READ, MAP_PRIVATE, fd, alignedOffset);
-      mappings.push_back({edgeDataPointer, sizeToMap});
-      if ((long int)edgeDataPointer == -1) {
-        perror("edgedatapoin");
-        GALOIS_SYS_DIE("failed to mmap edge data");
-      }
-      edgeDataPointer = (uint32_t*)((char*)edgeDataPointer + adjustment);
-      edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(EdgeTy));
-    }
-
+    read_edge_data(fd, edgeDataOffset);
     // file done, close it
     close(fd);
 
