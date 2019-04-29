@@ -15,24 +15,32 @@ target_include_directories(lonestar PUBLIC
 )
 target_link_libraries(lonestar galois_shmem gllvm)
 
-add_subdirectory(barneshut)
+function(versionGen name file)
+  app(${name}_offline ${file})
+  target_compile_definitions(${name}_offline PRIVATE OPTVERSION=1)
+
+  app(${name}_filegraph ${file})
+  target_compile_definitions(${name}_filegraph PRIVATE OPTVERSION=2)
+
+  app(${name}_direct ${file})
+  target_compile_definitions(${name}_direct PRIVATE OPTVERSION=3)
+
+  app(${name}_buffered ${file})
+  target_compile_definitions(${name}_buffered PRIVATE OPTVERSION=4)
+
+  app(${name}_mmap ${file})
+  target_compile_definitions(${name}_mmap PRIVATE OPTVERSION=5)
+
+  app(${name}_od ${file})
+  target_compile_definitions(${name}_od PRIVATE OPTVERSION=6)
+
+  app(${name}_async ${file})
+  target_compile_definitions(${name}_async PRIVATE OPTVERSION=7)
+endfunction()
+
 add_subdirectory(betweennesscentrality) 
-add_subdirectory(bfs)
-add_subdirectory(boruvka)
 add_subdirectory(connectedcomponents)
-add_subdirectory(delaunayrefinement)
-add_subdirectory(delaunaytriangulation)
-add_subdirectory(gmetis)
-add_subdirectory(independentset)
 add_subdirectory(kcore)
-add_subdirectory(matching)
-add_subdirectory(matrixcompletion)
 add_subdirectory(pagerank)
-add_subdirectory(pointstoanalysis)
-add_subdirectory(preflowpush)
 add_subdirectory(sssp)
-add_subdirectory(surveypropagation)
-add_subdirectory(triangles)
-add_subdirectory(motifcounting)
-add_subdirectory(tutorial_examples)
 add_subdirectory(practice)
