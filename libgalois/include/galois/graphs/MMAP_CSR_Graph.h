@@ -216,36 +216,55 @@ public:
     // padding alignment
     edgeDataOffset = (edgeDataOffset + 7) & ~7;
 
+    uint64_t alignedOffset = nodeIndexOffset &
+                     ~static_cast<uint64_t>(galois::substrate::allocSize() - 1);
+    uint64_t adjustment = nodeIndexOffset - alignedOffset;
+    uint64_t sizeToMap = numNodes * sizeof(uint64_t) + adjustment;
     // node index offsets
     uint64_t* edgeIndDataPointer = (uint64_t*)mmap(nullptr,
-                                     numNodes * sizeof(uint64_t),
-                                     PROT_READ, MAP_PRIVATE, fd,
-                                     nodeIndexOffset);
-    if (edgeIndDataPointer == nullptr) {
+                                     sizeToMap, PROT_READ, MAP_PRIVATE, fd,
+                                     alignedOffset);
+    mappings.push_back({edgeIndDataPointer, sizeToMap});
+    if ((long int)edgeIndDataPointer == -1) {
+      perror("edgeinddata");
       GALOIS_SYS_DIE("failed to mmap index data");
     }
-    mappings.push_back({edgeIndDataPointer, numNodes * sizeof(uint64_t)});
+    edgeIndDataPointer = (uint64_t*)((char*)edgeIndDataPointer + adjustment);
     // save large array using copy (swaps over sizes and pointer)
     edgeIndData = LargeArray<uint64_t>(edgeIndDataPointer,
                                        numNodes * sizeof(uint64_t));
 
+    alignedOffset = edgeDestOffset &
+                    ~static_cast<uint64_t>(galois::substrate::allocSize() - 1);
+    adjustment = edgeDestOffset - alignedOffset;
+    sizeToMap = numEdges * sizeof(uint32_t) + adjustment;
+
     // edge destinations
-    uint32_t* edgeDstPointer = (uint32_t*)mmap(nullptr, numEdges * sizeof(uint32_t),
-                                 PROT_READ, MAP_PRIVATE, fd, edgeDestOffset);
-    if (edgeDstPointer == nullptr) {
+    uint32_t* edgeDstPointer = (uint32_t*)mmap(nullptr, sizeToMap,
+                                 PROT_READ, MAP_PRIVATE, fd, alignedOffset);
+    mappings.push_back({edgeDstPointer, sizeToMap});
+    if ((long int)edgeDstPointer == -1) {
+      perror("edgedstpoin");
       GALOIS_SYS_DIE("failed to mmap edge dst");
     }
-    mappings.push_back({edgeDstPointer, numEdges * sizeof(uint32_t)});
+    edgeDstPointer = (uint32_t*)((char*)edgeDstPointer + adjustment);
     edgeDst = LargeArray<uint32_t>(edgeDstPointer, numEdges * sizeof(uint32_t));
 
     // edge data
     if (!std::is_void<EdgeTy>::value) {
-      uint32_t* edgeDataPointer = (EdgeTy*)mmap(nullptr, numEdges * sizeof(EdgeTy),
-                                 PROT_READ, MAP_PRIVATE, fd, edgeDataOffset);
-      if (edgeDataPointer == nullptr) {
+      alignedOffset = edgeDataOffset &
+                      ~static_cast<uint64_t>(galois::substrate::allocSize() - 1);
+      adjustment = edgeDataOffset - alignedOffset;
+      sizeToMap = numEdges * sizeof(EdgeTy) + adjustment;
+
+      uint32_t* edgeDataPointer = (EdgeTy*)mmap(nullptr, sizeToMap,
+                                 PROT_READ, MAP_PRIVATE, fd, alignedOffset);
+      mappings.push_back({edgeDataPointer, sizeToMap});
+      if ((long int)edgeDataPointer == -1) {
+        perror("edgedatapoin");
         GALOIS_SYS_DIE("failed to mmap edge data");
       }
-      mappings.push_back({edgeDataPointer, numEdges * sizeof(EdgeTy)});
+      edgeDataPointer = (uint32_t*)((char*)edgeDataPointer + adjustment);
       edgeData = LargeArray<uint32_t>(edgeDataPointer, numEdges * sizeof(EdgeTy));
     }
 
@@ -293,7 +312,7 @@ public:
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
       nodeData.allocateBlocked(numNodes);
-      this->outOfLineAllocateBlocked(numNodes, false);
+      this->outOfLineAllocateBlocked(numNodes);
     } else {
       nodeData.allocateInterleaved(numNodes);
       this->outOfLineAllocateInterleaved(numNodes);
