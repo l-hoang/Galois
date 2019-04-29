@@ -61,7 +61,7 @@ static cll::opt<unsigned int>
 static cll::opt<unsigned int>
     stepShift("delta",
               cll::desc("Shift value for the deltastep (default value 13)"),
-              cll::init(0));
+              cll::init(13));
 static cll::opt<bool> verify("verify", cll::desc("asdf"), cll::init(false));
 
 enum Algo {
