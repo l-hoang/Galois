@@ -198,37 +198,97 @@ public:
    * @param index Bit to set
    * @returns true if set success, false if already 1 or someone else sets it
    */
+  void set_for_sure(size_t index) {
+    //galois::gDebug(index, " setting FOR SURE");
+    size_t bit_index    = index / bits_uint64;
+    uint64_t bit_offset = 1;
+    bit_offset <<= (index % bits_uint64);
+    if ((bitvec[bit_index] & bit_offset) == 0) { // test and set
+      size_t old_val = bitvec[bit_index];
+      while (!bitvec[bit_index].compare_exchange_weak(
+          old_val, old_val | bit_offset, std::memory_order_relaxed)) {galois::gPrint("looop");}
+    }
+  }
+
+
+  /**
+   * Set a bit in the bitset.
+   *
+   * @param index Bit to set
+   * @returns true if set success, false if already 1 or someone else sets it
+   */
   bool set(size_t index) {
     size_t bit_index    = index / bits_uint64;
     uint64_t bit_offset = 1;
     bit_offset <<= (index % bits_uint64);
     if ((bitvec[bit_index] & bit_offset) == 0) { // test and set
-      //galois::gPrint("need to set\n");
       size_t old_val = bitvec[bit_index];
       bool result = false;
 
       while (!result) {
-        //galois::gPrint("while loop\n");
-        result = !bitvec[bit_index].compare_exchange_weak(old_val,
+        //galois::gDebug(index, " setting");
+        result = bitvec[bit_index].compare_exchange_weak(old_val,
                    old_val | bit_offset, std::memory_order_relaxed);
         // my swap success
-        if (result == true) {
+        if (result) {
+          //galois::gDebug(index, " true, swap succ");
+          assert(this->test(index));
+          //galois::gDebug(index, " true, swap succ 2");
           return result;
         } else {
           // check if it's set: if so, return false
           if ((old_val & bit_offset) == 1) {
+            //galois::gDebug(index, " already set");
+            assert(this->test(index));
+            //galois::gDebug(index, " already set past");
             return false;
           }
         }
       }
     } else {
-      // already set to 1
+      //galois::gDebug(index, " already set 2");
+      assert(this->test(index));
+      //galois::gDebug(index, " already set past 2");
       return false;
     }
     // shouldn't even get here
     GALOIS_DIE("shouldn't get here\n");
     return false;
   }
+
+  ///**
+  // * TODO doxygen?
+  // * reset bit, return true if we get it from 1 -> 0
+  // */
+  //bool reset(size_t index) {
+  //  size_t bit_index    = index / bits_uint64;
+  //  uint64_t bit_offset = 1;
+  //  bit_offset <<= (index % bits_uint64);
+  //  if ((bitvec[bit_index] & bit_offset) != 0) { // test and set
+  //    size_t old_val = bitvec[bit_index];
+  //    bool result = false;
+
+  //    while (!result) {
+  //      result = bitvec[bit_index].compare_exchange_weak(old_val,
+  //                 old_val & (~bit_offset), std::memory_order_relaxed);
+  //      // my swap success
+  //      if (result == true) {
+  //        return result;
+  //      } else {
+  //        // check if it's not set: if so, return false
+  //        if ((old_val & bit_offset) == 0) {
+  //          return false;
+  //        }
+  //      }
+  //    }
+  //  } else {
+  //    // already set to 0
+  //    return false;
+  //  }
+  //  // shouldn't even get here
+  //  GALOIS_DIE("shouldn't get here\n");
+  //  return false;
+  //}
 
   void reset(size_t index) {
     size_t bit_index = index/bits_uint64;
