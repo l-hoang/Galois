@@ -35,11 +35,11 @@
 
 #define SIG_AIO SIGRTMIN+1
 
-#define AIO_VEC_SIZE 1
+#define AIO_VEC_SIZE 1000
 
-#ifndef sigev_notify_thread_id
-#define sigev_notify_thread_id _sigev_un._tid
-#endif
+//#ifndef sigev_notify_thread_id
+//#define sigev_notify_thread_id _sigev_un._tid
+//#endif
 
 namespace galois {
 namespace graphs {
@@ -48,32 +48,17 @@ static thread_local unsigned int aioReqIdx;
 
 //void read_handler(sigval_t sigval)
 
-void readDstThCallback(sigval_t sig)
-{
-    //printf("AIO handler is called\n");
-    struct aiocb *req;
-    req = (struct aiocb *) sig.sival_ptr;
-    if (aio_error (req) == 0) {
-        int ret = aio_return(req);
-        //printf("Req offset: %d, size: %d\n", req->aio_offset, req->aio_nbytes);
-        //printf("results: %d\n", *(uint32_t *) req->aio_buf);
-    }
-    else {
-        //printf("Fail to get return\n");
-    }
-}
+struct aiocb_with_info {
+  struct aiocb aioReq;
+  int curNode;
+  galois::DynamicBitSet *complStats;
+  int status;
+};
 
-void readDstCallback(int s, siginfo_t * info, void *ctx)
-{
+void readDstCallback(int s, siginfo_t * info, void *ctx) {
     struct aiocb *aioReq;
     galois::DynamicBitSet *complStats;
     int curNode;
-
-    struct aiocb_with_info {
-        struct aiocb aioReq;
-        int curNode;
-        galois::DynamicBitSet *complStats;
-    };
 
     struct aiocb_with_info *req = (struct aiocb_with_info *)
                                        info->si_value.sival_ptr;
@@ -81,19 +66,31 @@ void readDstCallback(int s, siginfo_t * info, void *ctx)
     aioReq = &(req->aioReq);
     complStats = req->complStats;
     curNode = req->curNode;
+    //galois::gDebug("finished node is ", curNode);
     //printf("\n\nRequested aio: %p\n", aioReq);
     //printf("Requested complSets: %p\n", complStats);
     //printf("\nRequested node: %d\n", curNode);
-    if (aio_error (aioReq) == 0) {
+    int aio_error_code = aio_error(aioReq);
+    if (aio_error_code == 0) {
         int ret = aio_return(aioReq);
+        if (ret == -1) {
+          GALOIS_SYS_DIE("aio return returned bad value ", ret);
+        }
         //printf("Req offset: %d, size: %d\n", aioReq->aio_offset, aioReq->aio_nbytes);
         //printf("results: %d\n", *(uint32_t *) aioReq->aio_buf);
-    }
-    else {
-        printf("Fail to get return\n");
+    } else if (aio_error_code == ECANCELED) {
+      galois::gPrint("error code is ECANCELED\n");
+      GALOIS_DIE("handler shouldn't have got cancelled\n");
+    } else if (aio_error_code == EINPROGRESS) {
+      galois::gPrint("error code is EINPROGRESS\n");
+      GALOIS_DIE("handler shouldn't be in progress at completion\n");
+    } else {
+      perror("failure in aio_error, failed to get return");
+      GALOIS_DIE("aio error didn't work on completed request\n");
     }
 
-    complStats->set(curNode);
+    complStats->set_for_sure(curNode);
+    //galois::gDebug(curNode, " set for sure");
 }
 
 /**
@@ -174,12 +171,6 @@ public:
         type;
   };
 
-  struct aiocb_with_info {
-      struct aiocb aioReq;
-      int curNode;
-      galois::DynamicBitSet *complStats;
-  };
-
 protected:
   typedef internal::NodeInfoBaseTypes<NodeTy,
                                       !HasNoLockable && !HasOutOfLineLockable>
@@ -204,6 +195,7 @@ public:
   typedef FileEdgeTy file_edge_data_type;
   typedef NodeTy node_data_type;
   typedef typename NodeInfoTypes::reference node_data_reference;
+  typedef typename EdgeData::reference edge_data_reference;
   using edge_iterator =
       boost::counting_iterator<uint64_t>;
   using iterator = boost::counting_iterator<uint32_t>;
@@ -261,9 +253,9 @@ protected:
 
   GraphNode getNode(size_t n) { return n; }
 public:
-  ASYNC_CSR_Graph(ASYNC_CSR_Graph&& rhs) = default;
-  ASYNC_CSR_Graph()                     = default;
-  ASYNC_CSR_Graph& operator=(ASYNC_CSR_Graph&&) = default;
+  ASYNC_CSR_Graph(ASYNC_CSR_Graph&& rhs) = delete;
+  ASYNC_CSR_Graph()                      = delete;
+  ASYNC_CSR_Graph& operator=(ASYNC_CSR_Graph&&) = delete;
 
   /**
    * Accesses the "prefix sum" of this graph; takes advantage of the fact
@@ -286,19 +278,17 @@ public:
     numEdges = g.sizeEdges();
     edgeSize = g.edgeSize();
 
-    // Set signal
+    // register aio signal
     act.sa_sigaction = readDstCallback;
     act.sa_flags = SA_SIGINFO;
     sigemptyset(&act.sa_mask);
     sigaction(SIG_AIO, &act, NULL);
 
-    std::cout << "Num of nodes: " << numNodes << ", numEdges: " << numEdges << ", edgeSize: " << edgeSize << std::endl;
-
     // mmap the edge destinations and the edge indices
     fd = open(fName.c_str(), O_RDONLY);
     if (fd == -1) GALOIS_SYS_DIE("failed opening ", "'", fName, "', MMAP CSR");
 
-    // each array size 
+    // each array size
     edgeIndexSize = numNodes * sizeof(uint64_t);
     edgeDestSize = numEdges * sizeof(uint32_t);
     edgeDataSize = numEdges * sizeof(EdgeTy);
@@ -338,13 +328,12 @@ public:
     }
 
     // construct node data
-
     for (size_t n = 0; n < numNodes; ++n) {
       nodeData.constructAt(n);
     }
 
-    loadStatus.resize(numEdges);
-    completeStatus.resize(numEdges);
+    loadStatus.resize(numNodes);
+    completeStatus.resize(numNodes);
     aioReqIdx = 0;
   }
 
@@ -360,13 +349,14 @@ public:
     return NI.getData();
   }
 
-  bool loadEdges(GraphNode N) {
+  bool load_edges(GraphNode N) {
       bool result = false;
       auto& aioCbVec = *thLocDat.getLocal();
       if (!aioCbVec.size()) {
         // Initialize thread local vector.
         aioCbVec.clear();
         aioCbVec.resize(AIO_VEC_SIZE);
+        memset(aioCbVec.data(), 0, aioCbVec.size() * sizeof(aiocb_with_info));
       }
 
       if (!completeStatus.test(N)) {
@@ -376,57 +366,92 @@ public:
             // Read corresponding edge index array.
             // Request aio.
             struct aiocb* eDestAioCb = &(aioCbVec[aioReqIdx].aioReq);
-            // Also store the current node.
-            aioCbVec[aioReqIdx].curNode = N;
-            aioCbVec[aioReqIdx].complStats = &completeStatus;
 
             int ret;
-            if ((ret = aio_error(eDestAioCb)) == EINPROGRESS) {
-               // In this case, just skip computation.
-               return result;
+            //if ((ret = aio_error(eDestAioCb)) == EINPROGRESS) {
+            //   // looped around circular buffer, still in progress; design
+            //   // choice, just try again later instead of going past current
+            //   // position in buffer
+            //   // unset load status, return false
+            //   //galois::gPrint("reseting load status ", N, "\n");
+            //   loadStatus.reset(N);
+            //   // another thread (or same thread) will pick this back up
+            //   // later...
+            //   return false;
+            //}
+
+            if (aioCbVec[aioReqIdx].status == 1) {
+              // wait until struct is free (i.e. complete status has been set)
+              while (!completeStatus.test(aioCbVec[aioReqIdx].curNode)) {
+                //galois::gDebug("loop");
+              }
             }
+
+            // store the current node.
+            aioCbVec[aioReqIdx].curNode = N;
+            aioCbVec[aioReqIdx].complStats = &completeStatus;
+            aioCbVec[aioReqIdx].status = 1;
+
             memset(eDestAioCb, 0ul, sizeof(struct aiocb));
+            // graph file on disk
             eDestAioCb->aio_fildes = fd;
+
+            // setup buffers and offsets to read
             eDestAioCb->aio_offset = edgeDestOffset;
             if (N == 0) {
                 eDestAioCb->aio_nbytes = edgeIndData[0]*sizeof(uint32_t);
                 eDestAioCb->aio_buf = &edgeDst[0];
             } else {
-                eDestAioCb->aio_nbytes = (edgeIndData[N]-edgeIndData[N-1])
-                           *sizeof(uint32_t);
-                eDestAioCb->aio_buf = &edgeDst[edgeIndData[N-1]];
-                eDestAioCb->aio_offset += (edgeIndData[N-1]*sizeof(uint32_t));
+                eDestAioCb->aio_nbytes = (edgeIndData[N] - edgeIndData[N - 1])
+                                         * sizeof(uint32_t);
+                eDestAioCb->aio_buf = &edgeDst[edgeIndData[N - 1]];
+                eDestAioCb->aio_offset += (edgeIndData[N - 1] *
+                                          sizeof(uint32_t));
             }
 
             //std::cout << "offset: " << eDestAioCb->aio_offset << ", bytes: " <<
             //       eDestAioCb->aio_nbytes << "\n";
 
+            // get notified with signal
             eDestAioCb->aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+            // signal type is AIO
             eDestAioCb->aio_sigevent.sigev_signo = SIG_AIO;
             eDestAioCb->aio_sigevent.sigev_notify_attributes = NULL;
             eDestAioCb->aio_sigevent.sigev_value.sival_ptr = &(aioCbVec[aioReqIdx]);
 
+            //galois::gDebug("before idx ", aioReqIdx);
+            // increment circular buffer
+            aioReqIdx++;
             if (aioReqIdx == AIO_VEC_SIZE) aioReqIdx = 0;
-            else aioReqIdx ++;
+            //galois::gDebug("after idx ", aioReqIdx);
+
+            //galois::gDebug(N, " made it read");
             ret = aio_read(eDestAioCb);
+            if (ret != 0) {
+              GALOIS_SYS_DIE("aio read failure in load_edge");
+            }
           } else {
-            // Necessary data related to node N is already requested.
-            // We don't need to do anything in this case.
-            // When completion signal comes, completeStatus will be set.
+            //galois::gPrint("spin lock ", N);
           }
+          // Otherwise...
+          // Necessary data related to node N is already requested by another node
       } else {
-        //std::cout << "Already processed!\n";
+        //galois::gPrint("already loaded ", N, "\n");
+        // already loaded, don't need to do anything
         result= true;
       }
 
       return result;
   }
 
+  // TODO currently always returns 1
+  uint32_t aOne = 1;
   // note unlike LC CSR this edge data is immutable
-  EdgeTy getEdgeData(edge_iterator ni,
+  edge_data_reference getEdgeData(edge_iterator ni,
                      MethodFlag mflag = MethodFlag::UNPROTECTED) {
+    return aOne;
     // galois::runtime::checkWrite(mflag, false);
-    return edgeData[*ni];
+    //return edgeData[*ni];
   }
 
   GraphNode getEdgeDst(edge_iterator ni) { return edgeDst[*ni]; }
@@ -488,8 +513,8 @@ public:
     edgeDst.deallocate();
     edgeData.destroy();
     edgeData.deallocate();
-    thLocDat.destry();
-    thLocDat.deallocate();
+    //thLocDat.destroy();
+    //thLocDat.deallocate();
   }
 
   /**
