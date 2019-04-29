@@ -23,6 +23,7 @@
 #include "galois/Galois.h"
 #include "galois/graphs/Details.h"
 #include "galois/graphs/FileGraph.h"
+#include "galois/graphs/OfflineGraph.h"
 #include "galois/graphs/GraphHelpers.h"
 
 #include <type_traits>
@@ -335,6 +336,81 @@ public:
    * array
    */
   uint64_t operator[](uint64_t n) { return *(edge_end(n)); }
+
+  bool load_edges(GraphNode N) {
+    return true;
+  }
+
+  LC_CSR_Graph(const std::string filename) {
+    // use offline graph for metadata things
+    galois::graphs::OfflineGraph og(filename);
+    numNodes = og.size();
+    numEdges = og.sizeEdges();
+
+    // mmap the edge destinations and the edge indices
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd == -1) GALOIS_SYS_DIE("failed opening ", "'", filename, "', LC_CSR");
+
+    // each array size
+    size_t edgeIndexSize = numNodes * sizeof(uint64_t);
+    size_t edgeDestSize = numEdges * sizeof(uint32_t);
+    size_t edgeDataSize = numEdges * sizeof(EdgeTy);
+    // offsets for mapping
+    size_t nodeIndexOffset = 4 * sizeof(uint64_t);
+    size_t edgeDataOffset = (4 + numNodes) * sizeof(uint64_t) +
+                            (numEdges * sizeof(uint32_t));
+    // padding alignment
+    edgeDataOffset = (edgeDataOffset + 7) & ~7;
+
+    // allocate memory for node and edge data
+    if (UseNumaAlloc) {
+      nodeData.allocateBlocked(numNodes);
+      edgeIndData.allocateBlocked(numNodes);
+      edgeDst.allocateBlocked(numEdges);
+      edgeData.allocateBlocked(numEdges);
+      this->outOfLineAllocateBlocked(numNodes);
+    } else {
+      nodeData.allocateInterleaved(numNodes);
+      edgeIndData.allocateInterleaved(numNodes);
+      edgeDst.allocateInterleaved(numEdges);
+      edgeData.allocateInterleaved(numEdges);
+      this->outOfLineAllocateInterleaved(numNodes);
+    }
+    // construct node data
+    for (size_t n = 0; n < numNodes; ++n) {
+      nodeData.constructAt(n);
+    }
+
+    // move file descriptor to node index offsets array.
+    if ((int)nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
+      GALOIS_DIE("Failed to move file pointer to edge index array.");
+    }
+
+    // TODO read may not read everything at once; need to put this in a while
+    // loop
+    // read indices for nodes (prefix sum)
+    if ((int)edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
+      GALOIS_DIE("Failed to read edge index array.");
+    }
+
+    // read edge destinations for nodes
+    if ((int)edgeDestSize != read(fd, edgeDst.data(), edgeDestSize)) {
+      GALOIS_DIE("Failed to read dest array.");
+    }
+
+    if (!std::is_void<EdgeTy>::value) {
+      // move file descriptor to node index offsets array.
+      if ((int)edgeDataOffset != lseek(fd, edgeDataOffset, SEEK_SET)) {
+        GALOIS_DIE("Failed to move file pointer to edge data array.");
+      }
+      if ((int)edgeDataSize != read(fd, edgeData.data(), edgeDataSize)) {
+        GALOIS_DIE("Failed to read data array.");
+      }
+    }
+
+    // file done, close it
+    close(fd);
+  }
 
   template <typename EdgeNumFnTy, typename EdgeDstFnTy, typename EdgeDataFnTy>
   LC_CSR_Graph(uint32_t _numNodes, uint64_t _numEdges, EdgeNumFnTy edgeNum,
