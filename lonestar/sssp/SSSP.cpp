@@ -26,12 +26,16 @@
 #include "galois/graphs/LCGraph.h"
 #include "galois/graphs/TypeTraits.h"
 #include "llvm/Support/CommandLine.h"
+#include "galois/runtime/Tracer.h"
 
 #include "Lonestar/BoilerPlate.h"
 #include "Lonestar/BFS_SSSP.h"
 
 #include "galois/graphs/MMAP_CSR_Graph.h"
 #include "galois/graphs/OnDemand_CSR_Graph.h"
+#include "galois/graphs/ASYNCNB_CSR_Graph.h"
+#include "galois/graphs/OfflineGraphWrapper.h"
+#include "galois/graphs/BufferedGraphWrapper.h"
 
 #include <iostream>
 
@@ -57,7 +61,8 @@ static cll::opt<unsigned int>
 static cll::opt<unsigned int>
     stepShift("delta",
               cll::desc("Shift value for the deltastep (default value 13)"),
-              cll::init(13));
+              cll::init(0));
+static cll::opt<bool> verify("verify", cll::desc("asdf"), cll::init(false));
 
 enum Algo {
   deltaTile = 0,
@@ -88,12 +93,26 @@ static cll::opt<Algo>
 // typedef galois::graphs::LC_InlineEdge_Graph<std::atomic<unsigned int>,
 // uint32_t>::with_no_lockable<true>::type::with_numa_alloc<true>::type Graph;
 //! [withnumaalloc]
-//using Graph = galois::graphs::LC_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
-//    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+
+#if OPTVERSION == 1
+using Graph = galois::graphs::OfflineGraphWrapper<std::atomic<uint32_t>, uint32_t>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 2 || OPTVERSION == 3
+using Graph = galois::graphs::LC_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 4
+using Graph = galois::graphs::BufferedGraphWrapper<std::atomic<uint32_t>, uint32_t>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 5
+using Graph = galois::graphs::MMAP_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 6
 using Graph = galois::graphs::OnDemand_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
     with_no_lockable<true>::type ::with_numa_alloc<true>::type;
-//using Graph = galois::graphs::MMAP_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
-//    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 7
+using Graph = galois::graphs::ASYNC_CSR_Graph<std::atomic<uint32_t>, uint32_t>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#endif
 
 //! [withnumaalloc]
 typedef Graph::GraphNode GNode;
@@ -137,42 +156,48 @@ void deltaStepAlgo(Graph& graph, GNode source, const P& pushWrap,
                      constexpr galois::MethodFlag flag =
                          galois::MethodFlag::UNPROTECTED;
                      const auto& sdata = graph.getData(item.src, flag);
+                     bool loaded = graph.load_edges(item.src);
+                     //bool loaded = true;
+                     if (loaded) {
+                       if (sdata < item.dist) {
+                         if (TRACK_WORK)
+                           WLEmptyWork += 1;
+                         return;
+                       }
 
-                     if (sdata < item.dist) {
-                       if (TRACK_WORK)
-                         WLEmptyWork += 1;
-                       return;
-                     }
+                       for (auto ii : edgeRange(item)) {
+                         GNode dst          = graph.getEdgeDst(ii);
+                         auto& ddist        = graph.getData(dst, flag);
+                         Dist ew            = graph.getEdgeData(ii, flag);
+                         const Dist newDist = sdata + ew;
 
-                     for (auto ii : edgeRange(item)) {
+                         while (true) {
+                           Dist oldDist = ddist;
 
-                       GNode dst          = graph.getEdgeDst(ii);
-                       auto& ddist        = graph.getData(dst, flag);
-                       Dist ew            = graph.getEdgeData(ii, flag);
-                       const Dist newDist = sdata + ew;
-
-                       while (true) {
-                         Dist oldDist = ddist;
-
-                         if (oldDist <= newDist) {
-                           break;
-                         }
-
-                         if (ddist.compare_exchange_weak(
-                                 oldDist, newDist, std::memory_order_relaxed)) {
-
-                           if (TRACK_WORK) {
-                             //! [per-thread contribution of self-defined stats]
-                             if (oldDist != SSSP::DIST_INFINITY) {
-                               BadWork += 1;
-                             }
-                             //! [per-thread contribution of self-defined stats]
+                           if (oldDist <= newDist) {
+                             break;
                            }
 
-                           pushWrap(ctx, dst, newDist);
-                           break;
+                           if (ddist.compare_exchange_weak(
+                                   oldDist, newDist, std::memory_order_relaxed)) {
+
+                             if (TRACK_WORK) {
+                               //! [per-thread contribution of self-defined stats]
+                               if (oldDist != SSSP::DIST_INFINITY) {
+                                 BadWork += 1;
+                               }
+                               //! [per-thread contribution of self-defined stats]
+                             }
+
+                             pushWrap(ctx, dst, newDist);
+                             break;
+                           }
                          }
                        }
+                     } else {
+                       //galois::gDebug("push ", item.src);
+                       // edges not loaded
+                       ctx.push(item);
                      }
                    },
                    galois::wl<OBIM>(UpdateRequestIndexer{stepShift}),
@@ -369,10 +394,16 @@ int main(int argc, char** argv) {
   LonestarStart(argc, argv, name, desc, url);
 
   GNode source, report;
-
   std::cout << "Reading from file: " << filename << std::endl;
-  //galois::graphs::readGraph(graph, filename);
+
+  #if OPTVERSION != 2
   Graph graph(filename);
+  #else
+  Graph graph;
+  // file graph version
+  galois::graphs::readGraph(graph, filename);
+  #endif
+
   std::cout << "Read " << graph.size() << " nodes, " << graph.sizeEdges()
             << " edges" << std::endl;
 
@@ -457,9 +488,6 @@ int main(int argc, char** argv) {
   std::cout << "Node " << reportNode << " has distance "
             << graph.getData(report) << "\n";
 
-  for (auto i = graph.begin(); i < graph.end(); i++) {
-    galois::gPrint(*i , " ", graph.getData(*i).load(), "\n");
-  }
   if (!skipVerify) {
     if (SSSP::verify(graph, source)) {
       std::cout << "Verification successful.\n";
@@ -467,6 +495,14 @@ int main(int argc, char** argv) {
       GALOIS_DIE("Verification failed");
     }
   }
+
+  if (verify) {
+    for (auto ii = graph.begin(); ii != graph.end(); ++ii) {
+      galois::runtime::printOutput("% %\n", *ii, graph.getData(*ii).load());
+    }
+  }
+
+  reportGraphType();
 
   return 0;
 }
