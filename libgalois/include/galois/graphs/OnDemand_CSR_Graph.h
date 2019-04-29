@@ -26,8 +26,6 @@
 #include "galois/graphs/GraphHelpers.h"
 #include "galois/DynamicBitset.h"
 
-#include <thread>
-#include <csignal>
 #include <type_traits>
 
 namespace galois {
@@ -136,6 +134,7 @@ public:
   typedef FileEdgeTy file_edge_data_type;
   typedef NodeTy node_data_type;
   typedef typename NodeInfoTypes::reference node_data_reference;
+  typedef typename EdgeData::reference edge_data_reference;
   using edge_iterator =
       boost::counting_iterator<uint64_t>;
   using iterator = boost::counting_iterator<uint32_t>;
@@ -255,14 +254,14 @@ public:
     }
 
     // move file descriptor to node index offsets array.
-    if (nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
+    if ((int)nodeIndexOffset != lseek(fd, nodeIndexOffset, SEEK_SET)) {
       GALOIS_DIE("Failed to move file pointer to edge index array.");
     }
 
     // read indices for nodes (prefix sum)
     // TODO read may not read everything at once; need to put this in a while
     // loop
-    if (edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
+    if ((int)edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
       GALOIS_DIE("Failed to read edge index array.");
     }
 
@@ -283,7 +282,7 @@ public:
   }
 
   // note unlike LC CSR this edge data is immutable
-  EdgeTy getEdgeData(edge_iterator ni,
+  edge_data_reference getEdgeData(edge_iterator ni,
                      MethodFlag mflag = MethodFlag::UNPROTECTED) {
     // galois::runtime::checkWrite(mflag, false);
     return edgeData[*ni];
@@ -313,8 +312,8 @@ public:
     return local_iterator(this->localEnd(numNodes));
   }
 
-  void load_edges(GraphNode N) {
-     //galois::gPrint("load ", N, "\n");
+  bool load_edges(GraphNode N) {
+    //galois::gPrint("load ", N, "\n");
     // make sure edges are loaded
     if (!completeStatus.test(N)) {
       // only one thing should read at a time; get "lock" by checking load status
@@ -341,7 +340,6 @@ public:
 
         // Phase 2: read corresponding edge weight if exists
         if (typeid(EdgeTy) != typeid(void)) {
-            std::cout << "Type exists\n";
             if (N == 0) {
                 nBytes = edgeIndData[0]*sizeof(EdgeTy);
                 readByte = pread(fd, &edgeData[0], nBytes, edgeDataOffset);
@@ -357,11 +355,14 @@ public:
 
         }
         completeStatus.set(N);
+        assert(completeStatus.test(N));
       } else {
         // spin lock until complete status is set i.e. node is loaded
         while (!completeStatus.test(N));
+        //galois::gPrint(galois::substrate::getThreadPool().getTID(), " ", N, "\n");
       }
     }
+    return true;
   }
 
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
