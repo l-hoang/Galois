@@ -32,4 +32,24 @@ extern llvm::cl::opt<std::string> statFile;
 //! initialize lonestar benchmark
 void LonestarStart(int argc, char** argv, const char* app,
                    const char* desc = nullptr, const char* url = nullptr);
+
+
+//! print graph type as a stat
+inline void reportGraphType() {
+  #if OPTVERSION==1
+  galois::runtime::reportStat_Single("GraphType", "Offline", OPTVERSION);
+  #elif OPTVERSION==2
+  galois::runtime::reportStat_Single("GraphType", "FileGraph", OPTVERSION);
+  #elif OPTVERSION==3
+  galois::runtime::reportStat_Single("GraphType", "LCDirect", OPTVERSION);
+  #elif OPTVERSION==4
+  galois::runtime::reportStat_Single("GraphType", "Buffered", OPTVERSION);
+  #elif OPTVERSION==5
+  galois::runtime::reportStat_Single("GraphType", "MMAP", OPTVERSION);
+  #elif OPTVERSION==6
+  galois::runtime::reportStat_Single("GraphType", "OnDemand", OPTVERSION);
+  #elif OPTVERSION==7
+  galois::runtime::reportStat_Single("GraphType", "Async", OPTVERSION);
+  #endif
+}
 #endif
