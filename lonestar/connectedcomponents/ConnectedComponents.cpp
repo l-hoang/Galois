@@ -31,6 +31,13 @@
 #include "Lonestar/BoilerPlate.h"
 #include "galois/runtime/Profile.h"
 
+#include "galois/graphs/MMAP_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
+#include "galois/graphs/ASYNCNB_CSR_Graph.h"
+#include "galois/graphs/OfflineGraphWrapper.h"
+#include "galois/graphs/BufferedGraphWrapper.h"
+
+
 #include <utility>
 #include <vector>
 #include <algorithm>
@@ -328,8 +335,28 @@ struct AsyncAlgo {
 };
 
 struct EdgeTiledAsyncAlgo {
-  using Graph =
-      galois::graphs::LC_CSR_Graph<Node, void>::with_no_lockable<true>::type;
+  //using Graph =
+  //    galois::graphs::LC_CSR_Graph<Node, void>::with_no_lockable<true>::type;
+  #if OPTVERSION == 1
+  using Graph = galois::graphs::OfflineGraphWrapper<Node, void>::
+      with_no_lockable<true>::type;
+  #elif OPTVERSION == 2 || OPTVERSION == 3
+  using Graph = galois::graphs::LC_CSR_Graph<Node, void>::
+      with_no_lockable<true>::type;
+  #elif OPTVERSION == 4
+  using Graph = galois::graphs::BufferedGraphWrapper<Node, void>::
+      with_no_lockable<true>::type;
+  #elif OPTVERSION == 5
+  using Graph = galois::graphs::MMAP_CSR_Graph<Node, void>::
+      with_no_lockable<true>::type;
+  #elif OPTVERSION == 6
+  using Graph = galois::graphs::OnDemand_CSR_Graph<Node, void>::
+      with_no_lockable<true>::type;
+  #elif OPTVERSION == 7
+  using Graph = galois::graphs::ASYNC_CSR_Graph<Node, void>::
+      with_no_lockable<true>::type;
+  #endif
+
   using GNode = Graph::GraphNode;
 
   template <typename G>
@@ -363,8 +390,9 @@ struct EdgeTiledAsyncAlgo {
     std::cout
         << "WARNING: Do not expect the default to be good for your graph.\n";
 
-    galois::do_all(galois::iterate(graph),
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
                    [&](const GNode& src) {
+                    graph.load_edges(src);
                      // Node& sdata=graph.getData(src,
                      // galois::MethodFlag::UNPROTECTED);
                      auto beg =
@@ -393,6 +421,7 @@ struct EdgeTiledAsyncAlgo {
         [&](const EdgeTile& tile) {
           // Node& sdata = *(tile.sData);
           GNode src   = tile.src;
+          graph.load_edges(src);
           Node& sdata = graph.getData(src, galois::MethodFlag::UNPROTECTED);
 
           for (auto ii = tile.beg; ii != tile.end; ++ii) {
@@ -663,9 +692,15 @@ void run() {
   using Graph = typename Algo::Graph;
 
   Algo algo;
-  Graph graph;
 
+  // only works with edgetiled async
+  #if OPTVERSION != 2
+  Graph graph(inputFilename);
+  #else
+  Graph graph;
   algo.readGraph(graph);
+  #endif
+
   std::cout << "Read " << graph.size() << " nodes\n";
 
   initialize(graph);
@@ -695,7 +730,7 @@ int main(int argc, char** argv) {
   galois::SharedMemSys G;
   LonestarStart(argc, argv, name, desc, url);
 
-  galois::StatTimer T("TotalTime");
+  galois::StatTimer T("TotalTime", "CC");
   T.start();
   switch (algo) {
   case Algo::async:
@@ -725,6 +760,8 @@ int main(int argc, char** argv) {
     abort();
   }
   T.stop();
+
+  reportGraphType();
 
   return 0;
 }
