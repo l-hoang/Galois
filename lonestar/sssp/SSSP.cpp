@@ -396,6 +396,9 @@ int main(int argc, char** argv) {
   GNode source, report;
   std::cout << "Reading from file: " << filename << std::endl;
 
+  galois::StatTimer totalTime("TotalTime", "SSSP");
+  totalTime.start();
+
   #if OPTVERSION != 2
   Graph graph(filename);
   #else
@@ -481,6 +484,7 @@ int main(int argc, char** argv) {
     std::abort();
   }
 
+  totalTime.stop();
   Tmain.stop();
 
   galois::reportPageAlloc("MeminfoPost");
