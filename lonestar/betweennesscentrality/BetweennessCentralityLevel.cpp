@@ -29,6 +29,12 @@ constexpr static const char* const REGION_NAME = "BC";
 #include "llvm/Support/CommandLine.h"
 #include "Lonestar/BoilerPlate.h"
 
+#include "galois/graphs/MMAP_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
+#include "galois/graphs/ASYNCNB_CSR_Graph.h"
+#include "galois/graphs/OfflineGraphWrapper.h"
+#include "galois/graphs/BufferedGraphWrapper.h"
+
 // type of the num shortest paths variable
 using ShortPathType = double;
 
@@ -81,8 +87,28 @@ struct NodeData {
 std::ifstream sourceFile;
 std::vector<uint64_t> sourceVector;
 
+//using Graph = galois::graphs::LC_CSR_Graph<NodeData, void>::
+//                with_no_lockable<true>::type::with_numa_alloc<true>::type;
+#if OPTVERSION == 1
+using Graph = galois::graphs::OfflineGraphWrapper<NodeData, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 2 || OPTVERSION == 3
 using Graph = galois::graphs::LC_CSR_Graph<NodeData, void>::
-                with_no_lockable<true>::type::with_numa_alloc<true>::type;
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 4
+using Graph = galois::graphs::BufferedGraphWrapper<NodeData, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 5
+using Graph = galois::graphs::MMAP_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 6
+using Graph = galois::graphs::OnDemand_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 7
+using Graph = galois::graphs::ASYNC_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#endif
+
 using GNode = Graph::GraphNode;
 using WorklistType = galois::InsertBag<GNode, 4096>;
 
@@ -164,6 +190,7 @@ galois::gstl::Vector<WorklistType> SSSP(Graph& graph) {
         NodeData& curData = graph.getData(n);
         GALOIS_ASSERT(curData.currentDistance == currentLevel);
 
+        graph.load_edges(n);
         for (auto e : graph.edges(n)) {
           GNode dest = graph.getEdgeDst(e);
           NodeData& destData = graph.getData(dest);
@@ -221,6 +248,7 @@ void BackwardBrandes(Graph& graph,
           NodeData& curData = graph.getData(n);
           GALOIS_ASSERT(curData.currentDistance == currentLevel);
 
+          graph.load_edges(n);
           for (auto e : graph.edges(n)) {
             GNode dest = graph.getEdgeDst(e);
             NodeData& destData = graph.getData(dest);
@@ -310,8 +338,14 @@ int main(int argc, char** argv) {
   // Graph construction
   galois::StatTimer graphConstructTimer("TimerConstructGraph", "BFS");
   graphConstructTimer.start();
+
+  #if OPTVERSION != 2
+  Graph graph(filename);
+  #else
   Graph graph;
   galois::graphs::readGraph(graph, filename);
+  #endif
+
   graphConstructTimer.stop();
   galois::gInfo("Graph construction complete");
 
