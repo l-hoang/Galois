@@ -25,6 +25,12 @@
 #include "Lonestar/BoilerPlate.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "galois/graphs/MMAP_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
+#include "galois/graphs/ASYNCNB_CSR_Graph.h"
+#include "galois/graphs/OfflineGraphWrapper.h"
+#include "galois/graphs/BufferedGraphWrapper.h"
+
 constexpr static const char* const REGION_NAME = "k-core";
 
 /******************************************************************************/
@@ -67,8 +73,29 @@ struct NodeData {
 };
 
 //! Typedef for graph used, CSR graph
-using Graph =
-  galois::graphs::LC_CSR_Graph<NodeData, void>::with_no_lockable<true>::type;
+//using Graph =
+//  galois::graphs::LC_CSR_Graph<NodeData, void>::with_no_lockable<true>::type;
+
+#if OPTVERSION == 1
+using Graph = galois::graphs::OfflineGraphWrapper<NodeData, void>::
+    with_no_lockable<true>::type;
+#elif OPTVERSION == 2 || OPTVERSION == 3
+using Graph = galois::graphs::LC_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type;
+#elif OPTVERSION == 4
+using Graph = galois::graphs::BufferedGraphWrapper<NodeData, void>::
+    with_no_lockable<true>::type;
+#elif OPTVERSION == 5
+using Graph = galois::graphs::MMAP_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type;
+#elif OPTVERSION == 6
+using Graph = galois::graphs::OnDemand_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type;
+#elif OPTVERSION == 7
+using Graph = galois::graphs::ASYNC_CSR_Graph<NodeData, void>::
+    with_no_lockable<true>::type;
+#endif
+
 //! Typedef for node type in the CSR graph
 using GNode = Graph::GraphNode;
 
@@ -142,6 +169,7 @@ void syncCascadeKCore(Graph& graph) {
       galois::iterate(*current),
       [&] (GNode deadNode) {
         // decrement degree of all neighbors
+        graph.load_edges(deadNode);
         for (auto e : graph.edges(deadNode)) {
           GNode dest = graph.getEdgeDst(e);
           NodeData& destData = graph.getData(dest);
@@ -177,6 +205,7 @@ void asyncCascadeKCore(Graph& graph, galois::InsertBag<GNode>& initialWorklist) 
     galois::iterate(initialWorklist),
     [&] (GNode deadNode, auto& ctx) {
       // decrement degree of all neighbors
+      graph.load_edges(deadNode);
       for (auto e : graph.edges(deadNode)) {
         GNode dest = graph.getEdgeDst(e);
         NodeData& destData = graph.getData(dest);
@@ -254,8 +283,14 @@ int main(int argc, char** argv) {
   // graph reading from disk
   galois::StatTimer graphReadingTimer("GraphConstructTime", REGION_NAME);
   graphReadingTimer.start();
+
+  #if OPTVERSION != 2
+  Graph graph(inputFilename);
+  #else
   Graph graph;
   galois::graphs::readGraph(graph, inputFilename);
+  #endif
+
   graphReadingTimer.stop();
 
   // preallocate pages in memory so allocation doesn't occur during compute

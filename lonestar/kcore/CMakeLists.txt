@@ -1,1 +1,1 @@
-app(kcore kcore.cpp)
+versionGen(kcore kcore.cpp)
