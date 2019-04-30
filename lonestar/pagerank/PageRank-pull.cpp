@@ -26,6 +26,12 @@
 #include "galois/graphs/TypeTraits.h"
 #include "galois/gstl.h"
 
+#include "galois/graphs/MMAP_CSR_Graph.h"
+#include "galois/graphs/OnDemand_CSR_Graph.h"
+#include "galois/graphs/ASYNCNB_CSR_Graph.h"
+#include "galois/graphs/OfflineGraphWrapper.h"
+#include "galois/graphs/BufferedGraphWrapper.h"
+
 const char* desc =
     "Computes page ranks a la Page and Brin. This is a pull-style algorithm.";
 
@@ -45,8 +51,28 @@ struct LNode {
   uint32_t nout;
 };
 
-typedef galois::graphs::LC_CSR_Graph<LNode, void>::with_no_lockable<
-    true>::type ::with_numa_alloc<true>::type Graph;
+//typedef galois::graphs::LC_CSR_Graph<LNode, void>::with_no_lockable<
+//    true>::type ::with_numa_alloc<true>::type Graph;
+#if OPTVERSION == 1
+using Graph = galois::graphs::OfflineGraphWrapper<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 2 || OPTVERSION == 3
+using Graph = galois::graphs::LC_CSR_Graph<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 4
+using Graph = galois::graphs::BufferedGraphWrapper<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 5
+using Graph = galois::graphs::MMAP_CSR_Graph<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 6
+using Graph = galois::graphs::OnDemand_CSR_Graph<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#elif OPTVERSION == 7
+using Graph = galois::graphs::ASYNC_CSR_Graph<LNode, void>::
+    with_no_lockable<true>::type ::with_numa_alloc<true>::type;
+#endif
+
 typedef typename Graph::GraphNode GNode;
 
 using DeltaArray    = galois::LargeArray<PRTy>;
@@ -54,7 +80,7 @@ using ResidualArray = galois::LargeArray<PRTy>;
 
 //! [example of no_stats]
 void initNodeDataTopological(Graph& g) {
-  galois::do_all(galois::iterate(g),
+  galois::do_all(galois::iterate(g.begin(), g.end()),
                  [&](const GNode& n) {
                    auto& sdata = g.getData(n, galois::MethodFlag::UNPROTECTED);
                    sdata.value = INIT_RESIDUAL;
@@ -66,7 +92,7 @@ void initNodeDataTopological(Graph& g) {
 
 void initNodeDataResidual(Graph& g, DeltaArray& delta,
                           ResidualArray& residual) {
-  galois::do_all(galois::iterate(g),
+  galois::do_all(galois::iterate(g.begin(), g.end()),
                  [&](const GNode& n) {
                    auto& sdata = g.getData(n, galois::MethodFlag::UNPROTECTED);
                    sdata.value = 0;
@@ -86,12 +112,13 @@ void computeOutDeg(Graph& graph) {
   galois::LargeArray<std::atomic<size_t>> vec;
   vec.allocateInterleaved(graph.size());
 
-  galois::do_all(galois::iterate(graph),
+  galois::do_all(galois::iterate(graph.begin(), graph.end()),
                  [&](const GNode& src) { vec.constructAt(src, 0ul); },
                  galois::no_stats(), galois::loopname("InitDegVec"));
 
-  galois::do_all(galois::iterate(graph),
+  galois::do_all(galois::iterate(graph.begin(), graph.end()),
                  [&](const GNode& src) {
+                   graph.load_edges(src);
                    for (auto nbr : graph.edges(src)) {
                      GNode dst = graph.getEdgeDst(nbr);
                      vec[dst].fetch_add(1ul);
@@ -100,7 +127,7 @@ void computeOutDeg(Graph& graph) {
                  galois::steal(), galois::chunk_size<CHUNK_SIZE>(),
                  galois::no_stats(), galois::loopname("computeOutDeg"));
 
-  galois::do_all(galois::iterate(graph),
+  galois::do_all(galois::iterate(graph.begin(), graph.end()),
                  [&](const GNode& src) {
                    auto& srcData =
                        graph.getData(src, galois::MethodFlag::UNPROTECTED);
@@ -118,7 +145,7 @@ void computePRResidual(Graph& graph, DeltaArray& delta,
   galois::GAccumulator<unsigned int> accum;
 
   while (true) {
-    galois::do_all(galois::iterate(graph),
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
                    [&](const GNode& src) {
                      auto& sdata = graph.getData(src);
                      delta[src]  = 0;
@@ -135,9 +162,10 @@ void computePRResidual(Graph& graph, DeltaArray& delta,
                    },
                    galois::no_stats(), galois::loopname("PageRank_delta"));
 
-    galois::do_all(galois::iterate(graph),
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
                    [&](const GNode& src) {
                      float sum = 0;
+                     graph.load_edges(src);
                      for (auto nbr : graph.edges(src)) {
                        GNode dst = graph.getEdgeDst(nbr);
                        if (delta[dst] > 0) {
@@ -176,14 +204,14 @@ void computePRTopological(Graph& graph) {
 
   while (true) {
 
-    galois::do_all(galois::iterate(graph),
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
                    [&](const GNode& src) {
                      constexpr const galois::MethodFlag flag =
                          galois::MethodFlag::UNPROTECTED;
 
                      LNode& sdata = graph.getData(src, flag);
                      float sum    = 0.0;
-
+                     graph.load_edges(src);
                      for (auto jj = graph.edge_begin(src, flag),
                                ej = graph.edge_end(src, flag);
                           jj != ej; ++jj) {
@@ -255,17 +283,23 @@ int main(int argc, char** argv) {
   galois::SharedMemSys G;
   LonestarStart(argc, argv, name, desc, url);
 
-  galois::StatTimer overheadTime("OverheadTime");
-  overheadTime.start();
 
-  Graph transposeGraph;
+  galois::StatTimer totalTime("TotalTime", "PageRank");
+  totalTime.start();
+
   std::cout << "WARNING: pull style algorithms work on the transpose of the "
                "actual graph\n"
             << "WARNING: this program assumes that " << filename
             << " contains transposed representation\n\n"
             << "Reading graph: " << filename << std::endl;
 
+  #if OPTVERSION != 2
+  Graph transposeGraph(filename);
+  #else
+  Graph transposeGraph;
   galois::graphs::readGraph(transposeGraph, filename);
+  #endif
+
   std::cout << "Read " << transposeGraph.size() << " nodes, "
             << transposeGraph.sizeEdges() << " edges\n";
 
@@ -289,6 +323,7 @@ int main(int argc, char** argv) {
   }
   default: { std::abort(); }
   }
+  totalTime.stop();
 
   galois::reportPageAlloc("MeminfoPost");
 
@@ -300,6 +335,5 @@ int main(int argc, char** argv) {
   printPageRank(transposeGraph);
 #endif
 
-  overheadTime.stop();
   return 0;
 }
