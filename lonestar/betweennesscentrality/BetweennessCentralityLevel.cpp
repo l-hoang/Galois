@@ -97,7 +97,7 @@ constexpr static const unsigned CHUNK_SIZE = 256u;
  */
 void InitializeGraph(Graph& graph) {
   galois::do_all(
-    galois::iterate(graph),
+    galois::iterate(graph.begin(), graph.end()),
     [&] (GNode n) {
       NodeData& nodeData = graph.getData(n);
       nodeData.currentDistance    = 0;
@@ -117,7 +117,7 @@ void InitializeGraph(Graph& graph) {
  */
 void InitializeIteration(Graph& graph) {
   galois::do_all(
-    galois::iterate(graph),
+    galois::iterate(graph.begin(), graph.end()),
     [&] (GNode n) {
       NodeData& nodeData = graph.getData(n);
       bool isSource = (n == currentSrcNode);
@@ -269,7 +269,7 @@ void Sanity(Graph& graph) {
 
   // get max, min, sum of BC values using accumulators and reducers
   galois::do_all(
-    galois::iterate(graph),
+    galois::iterate(graph.begin(), graph.end()),
     [&] (GNode n) {
       NodeData& nodeData = graph.getData(n);
       accumMax.update(nodeData.bc);
