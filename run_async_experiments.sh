@@ -38,6 +38,12 @@ for benchmark in "${BENCHMARKS[@]}"; do
     bettername=`echo "$benchmark" | tr / _`
 
     # warmup run
+    for graphtype in "${GRAPHTYPES[@]}"; do
+      echo "${execdir}/${benchmark}/${benchmark}_${graphtype} ${finalinput} ${FLAGS}"
+      ${execdir}/${benchmark}/${benchmark}_${graphtype} ${finalinput} ${FLAGS}
+    done
+
+    # warmup run
     COMPL_TIME=0.0
     echo $MAX_ITER;
     for graphtype in "${GRAPHTYPES[@]}"; do
