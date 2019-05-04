@@ -206,7 +206,7 @@ public:
     if ((bitvec[bit_index] & bit_offset) == 0) { // test and set
       size_t old_val = bitvec[bit_index];
       while (!bitvec[bit_index].compare_exchange_weak(
-          old_val, old_val | bit_offset, std::memory_order_relaxed)) {galois::gPrint("looop");}
+          old_val, old_val | bit_offset, std::memory_order_relaxed)) { }
     }
   }
 
