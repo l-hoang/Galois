@@ -101,6 +101,14 @@ static cll::opt<Algo> algo(
                 clEnumValEnd),
     cll::init(Algo::edgetiledasync));
 
+//! Flag that forces user to be aware that they should be passing in a
+//! symmetric graph
+static cll::opt<bool> symmetricGraph("symmetricGraph",
+  cll::desc("Flag should be used to make user aware they should be passing a "
+            "symmetric graph to this program"),
+  cll::init(false));
+
+
 struct Node : public galois::UnionFindNode<Node> {
   using component_type = Node*;
 
@@ -755,6 +763,11 @@ void run() {
 int main(int argc, char** argv) {
   galois::SharedMemSys G;
   LonestarStart(argc, argv, name, desc, url);
+
+  if (!symmetricGraph) {
+    GALOIS_DIE("User did not pass in symmetric graph flag signifying they are "
+               "aware this program needs to be passed a symmetric graph.");
+  }
 
   galois::StatTimer T("TotalTime", "CC");
   T.start();
