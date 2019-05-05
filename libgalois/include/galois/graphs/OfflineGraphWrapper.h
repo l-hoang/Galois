@@ -116,6 +116,9 @@ protected:
                                  !HasNoLockable && !HasOutOfLineLockable>
       NodeInfo;
   typedef LargeArray<NodeInfo> NodeData;
+  typedef LargeArray<EdgeTy> EdgeData;
+  typedef LargeArray<uint32_t> EdgeDst;
+  typedef LargeArray<uint64_t> EdgeIndData;
 
 public:
   typedef uint32_t GraphNode;
@@ -131,6 +134,10 @@ public:
 
 protected:
   NodeData nodeData;
+  EdgeIndData edgeIndData;
+  EdgeDst edgeDst;
+  EdgeData edgeData;
+
   uint64_t numNodes;
   uint64_t numEdges;
   size_t getId(GraphNode N) { return N; }
@@ -175,24 +182,68 @@ public:
     return true;
   }
 
+  // actually has data
+  template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
+  void loadEdgeData(boost::counting_iterator<uint64_t>& dataIter) {
+    for (uint64_t i = 0; i < numEdges; i++) {
+      assert(i == *dataIter);
+      constructEdgeData(i, g.getEdgeData<uint32_t>(dataIter));
+      dataIter++;
+    }
+  }
+
+  template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>
+  void loadEdgeData(boost::counting_iterator<uint64_t>&) { }
+
+  void constructEdgeData(uint64_t e, const typename EdgeData::value_type& val) {
+    edgeData.set(e, val);
+  }
+
+  void constructEdge(uint64_t e, uint32_t dst) { edgeDst[e] = dst; }
+  void fixEndEdge(uint32_t n, uint64_t e) { edgeIndData[n] = e; }
+
+
   OfflineGraphWrapper(const std::string& filename) : g{filename} {
     galois::gInfo("Graph: OfflineGraph");
-    // use offline graph 
+    // use offline graph
     numNodes = g.size();
     numEdges = g.sizeEdges();
 
     // allocate memory for node data
     if (UseNumaAlloc) {
       nodeData.allocateBlocked(numNodes);
+      edgeIndData.allocateBlocked(numNodes);
+      edgeDst.allocateBlocked(numEdges);
+      edgeData.allocateBlocked(numEdges);
       this->outOfLineAllocateBlocked(numNodes);
     } else {
       nodeData.allocateInterleaved(numNodes);
+      edgeIndData.allocateInterleaved(numNodes);
+      edgeDst.allocateInterleaved(numEdges);
+      edgeData.allocateInterleaved(numEdges);
       this->outOfLineAllocateInterleaved(numNodes);
     }
     // construct node data
     for (size_t n = 0; n < numNodes; ++n) {
       nodeData.constructAt(n);
     }
+
+    auto destIterator = g.edge_begin(0);
+    auto dataIterator = g.edge_begin(0);
+
+    // fixing end edges
+    for (uint64_t i = 0; i < numNodes; i++) {
+      auto e = g.edge_end(i);
+      fixEndEdge(i, *e);
+    }
+
+    // edge destinations
+    for (uint64_t i = 0; i < numEdges; i++) {
+      constructEdge(*destIterator, g.getEdgeDst(destIterator));
+      destIterator++;
+    }
+    // edge data (if it exists)
+    loadEdgeData(dataIterator);
   }
 
   node_data_reference getData(GraphNode N,
@@ -207,13 +258,14 @@ public:
   EdgeTy getEdgeData(edge_iterator ni,
                      MethodFlag mflag = MethodFlag::UNPROTECTED) {
     // galois::runtime::checkWrite(mflag, false);
-    return g.getEdgeData<EdgeTy>(*ni);
+    return edgeData[*ni];
   }
 
-  GraphNode getEdgeDst(edge_iterator ni) { return g.getEdgeDst(*ni); }
+  GraphNode getEdgeDst(edge_iterator ni) { return edgeDst[*ni]; }
 
   size_t size() const { return numNodes; }
   size_t sizeEdges() const { return numEdges; }
+
 
   iterator begin() const { return iterator(0); }
   iterator end() const { return iterator(numNodes); }
@@ -234,19 +286,27 @@ public:
   //  return local_iterator(this->localEnd(numNodes));
   //}
 
+  edge_iterator raw_begin(GraphNode N) const {
+    return edge_iterator((N == 0) ? 0 : edgeIndData[N - 1]);
+  }
+
+  edge_iterator raw_end(GraphNode N) const {
+    return edge_iterator(edgeIndData[N]);
+  }
+
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
     acquireNode(N, mflag);
-    //if (galois::runtime::shouldLock(mflag)) {
-    //  for (edge_iterator ii = edge_begin(N), ee = edge_end(N); ii != ee; ++ii) {
-    //    acquireNode(g.getEdgeDst(*ii), mflag);
-    //  }
-    //}
-    return g.edge_begin(N);
+    if (galois::runtime::shouldLock(mflag)) {
+      for (edge_iterator ii = raw_begin(N), ee = raw_end(N); ii != ee; ++ii) {
+        acquireNode(edgeDst[*ii], mflag);
+      }
+    }
+    return raw_begin(N);
   }
 
   edge_iterator edge_end(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
     acquireNode(N, mflag);
-    return g.edge_end(N);
+    return raw_end(N);
   }
 
   runtime::iterable<NoDerefIterator<edge_iterator>>
