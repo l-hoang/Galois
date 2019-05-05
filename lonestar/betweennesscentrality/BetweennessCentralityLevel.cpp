@@ -332,7 +332,7 @@ int main(int argc, char** argv) {
   galois::runtime::reportStat_Single(REGION_NAME, "ChunkSize", CHUNK_SIZE);
   galois::reportPageAlloc("MemAllocPre");
 
-  galois::StatTimer totalTimer("TimerTotal", REGION_NAME);
+  galois::StatTimer totalTimer("TotalTime", REGION_NAME);
   totalTimer.start();
 
   // Graph construction
