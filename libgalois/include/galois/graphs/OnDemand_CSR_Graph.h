@@ -373,7 +373,6 @@ public:
   }
 
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    load_edges(N);
     acquireNode(N, mflag);
     if (galois::runtime::shouldLock(mflag)) {
       for (edge_iterator ii = raw_begin(N), ee = raw_end(N); ii != ee; ++ii) {
@@ -384,14 +383,12 @@ public:
   }
 
   edge_iterator edge_end(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    load_edges(N);
     acquireNode(N, mflag);
     return raw_end(N);
   }
 
   runtime::iterable<NoDerefIterator<edge_iterator>>
   edges(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
-    load_edges(N);
     return internal::make_no_deref_range(edge_begin(N, mflag),
                                          edge_end(N, mflag));
   }
