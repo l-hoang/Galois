@@ -331,11 +331,11 @@ int main(int argc, char** argv) {
 
   runtimeTimer.stop();
 
-  if (1) {
-    std::ofstream outfp("kcore_time");
-    outfp << runtimeTimer.get_usec()/(float)1000000 << std::endl;
-    outfp.close();
-  }
+  //if (1) {
+  //  std::ofstream outfp("kcore_time");
+  //  outfp << runtimeTimer.get_usec()/(float)1000000 << std::endl;
+  //  outfp.close();
+  //}
 
 
   totalTimer.stop();
