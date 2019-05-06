@@ -388,8 +388,6 @@ struct EdgeTiledAsyncAlgo {
   const int EDGE_TILE_SIZE = 512; // 512 -> 64
   void operator()(Graph& graph) {
     galois::GAccumulator<size_t> emptyMerges;
-    galois::GAccumulator<uint64_t> leftElems;
-
 
     galois::InsertBag<EdgeTile> works;
 
@@ -400,66 +398,57 @@ struct EdgeTiledAsyncAlgo {
     std::cout
         << "WARNING: Do not expect the default to be good for your graph.\n";
 
-    while (true) {
-        galois::do_all(galois::iterate(graph.begin(), graph.end()),
-                       [&](const GNode& src) {
-                         bool loaded = graph.load_edges(src);
-                         if (loaded) {
-                             leftElems += 1;
-                             // Node& sdata=graph.getData(src,
-                             // galois::MethodFlag::UNPROTECTED);
-                             auto beg =
-                                 graph.edge_begin(src, galois::MethodFlag::UNPROTECTED);
-                             const auto end =
-                                 graph.edge_end(src, galois::MethodFlag::UNPROTECTED);
+    galois::do_all(galois::iterate(graph.begin(), graph.end()),
+                   [&](const GNode& src) {
+                    graph.load_edges(src);
+                     // Node& sdata=graph.getData(src,
+                     // galois::MethodFlag::UNPROTECTED);
+                     auto beg =
+                         graph.edge_begin(src, galois::MethodFlag::UNPROTECTED);
+                     const auto end =
+                         graph.edge_end(src, galois::MethodFlag::UNPROTECTED);
 
-                             assert(beg <= end);
-                             if ((end - beg) > EDGE_TILE_SIZE) {
-                               for (; beg + EDGE_TILE_SIZE < end;) {
-                                 auto ne = beg + EDGE_TILE_SIZE;
-                                 assert(ne < end);
-                                 works.push_back(EdgeTile{src, beg, ne});
-                                 beg = ne;
-                               }
-                             }
+                     assert(beg <= end);
+                     if ((end - beg) > EDGE_TILE_SIZE) {
+                       for (; beg + EDGE_TILE_SIZE < end;) {
+                         auto ne = beg + EDGE_TILE_SIZE;
+                         assert(ne < end);
+                         works.push_back(EdgeTile{src, beg, ne});
+                         beg = ne;
+                       }
+                     }
 
-                             if ((end - beg) > 0) {
-                               works.push_back(EdgeTile{src, beg, end});
-                             }
-                         }
-                       },
-                       galois::loopname("CC-EdgeTiledAsyncInit"), galois::steal());
+                     if ((end - beg) > 0) {
+                       works.push_back(EdgeTile{src, beg, end});
+                     }
+                   },
+                   galois::loopname("CC-EdgeTiledAsyncInit"), galois::steal());
 
-        galois::do_all(
-            galois::iterate(works),
-            [&](const EdgeTile& tile) {
-              // Node& sdata = *(tile.sData);
-              GNode src   = tile.src;
-              bool loaded = graph.load_edges(src);
-              if (loaded) {
-                  Node& sdata = graph.getData(src, galois::MethodFlag::UNPROTECTED);
+    galois::do_all(
+        galois::iterate(works),
+        [&](const EdgeTile& tile) {
+          // Node& sdata = *(tile.sData);
+          GNode src   = tile.src;
+          graph.load_edges(src);
+          Node& sdata = graph.getData(src, galois::MethodFlag::UNPROTECTED);
 
-                  for (auto ii = tile.beg; ii != tile.end; ++ii) {
-                    GNode dst = graph.getEdgeDst(ii);
-                    if (src >= dst)
-                      continue;
+          for (auto ii = tile.beg; ii != tile.end; ++ii) {
+            GNode dst = graph.getEdgeDst(ii);
+            if (src >= dst)
+              continue;
 
-                    Node& ddata = graph.getData(dst, galois::MethodFlag::UNPROTECTED);
+            Node& ddata = graph.getData(dst, galois::MethodFlag::UNPROTECTED);
 
-                    if (src >= dst)
-                      continue;
+            if (src >= dst)
+              continue;
 
-                    if (!sdata.merge(&ddata))
-                      emptyMerges += 1;
-                  }
-              }
-            },
-            galois::loopname("CC-edgetiledAsync"), galois::steal(),
-            galois::chunk_size<CHUNK_SIZE>() // 16 -> 1
-        );
-
-        if (leftElems.reduce() == graph.size()) break;
-    }
+            if (!sdata.merge(&ddata))
+              emptyMerges += 1;
+          }
+        },
+        galois::loopname("CC-edgetiledAsync"), galois::steal(),
+        galois::chunk_size<CHUNK_SIZE>() // 16 -> 1
+    );
 
     galois::runtime::reportStat_Single("CC-edgeTiledAsync", "emptyMerges",
                                        emptyMerges.reduce());
@@ -622,19 +611,6 @@ bool verify(Graph& graph,
          graph.end();
 }
 
-template <typename Graph>
-void printLabel(Graph& graph) {
-
-    std::ofstream labelFp;
-    labelFp.open("cc_output");
-    for (auto ii = graph.begin(), ei = graph.end();
-            ii != ei; ii++) {
-        auto& data = graph.getData(*ii);
-        labelFp << *ii << "," << data.component() <<"\n";
-    }
-    labelFp.close();
-}
-
 template <typename Algo, typename Graph>
 typename Graph::node_data_type::component_type findLargest(Graph& graph) {
 
@@ -756,8 +732,6 @@ void run() {
       GALOIS_DIE("verification failed");
     }
   }
-
-  printLabel(graph);
 }
 
 int main(int argc, char** argv) {
