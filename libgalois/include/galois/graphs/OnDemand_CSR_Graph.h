@@ -256,12 +256,16 @@ public:
       GALOIS_DIE("Failed to move file pointer to edge index array.");
     }
 
-    // read indices for nodes (prefix sum)
-    // TODO read may not read everything at once; need to put this in a while
-    // loop
-    if ((int)edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
-      GALOIS_DIE("Failed to read edge index array.");
+    uint64_t numBytesToLoad = edgeIndexSize;
+    uint64_t bytesRead      = 0;
+    while (numBytesToLoad > 0) {
+      ssize_t numRead = read(fd, ((char*)(edgeIndData.data())) + bytesRead,
+                         numBytesToLoad);
+      GALOIS_ASSERT(numRead != -1);
+      numBytesToLoad -= numRead;
+      bytesRead += numRead;
     }
+    assert(numBytesToLoad == 0);
 
     loadStatus.resize(numNodes);
     completeStatus.resize(numNodes);
@@ -312,8 +316,8 @@ public:
 
   template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
   void read_edge_data(GraphNode N) {
-    size_t nBytes;
-    size_t readByte;
+    ssize_t nBytes;
+    ssize_t readByte;
 
     if (N == 0) {
       nBytes = edgeIndData[0] * sizeof(EdgeTy);
@@ -324,7 +328,7 @@ public:
                        nBytes,
                        edgeDataOffset+(edgeIndData[N - 1] * sizeof(EdgeTy)));
     }
-    assert(readByte == nBytes);
+    GALOIS_ASSERT(readByte == nBytes);
   }
 
   template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>

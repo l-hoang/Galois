@@ -386,28 +386,68 @@ public:
       GALOIS_DIE("Failed to move file pointer to edge index array.");
     }
 
-    // TODO read may not read everything at once; need to put this in a while
-    // loop
-    // read indices for nodes (prefix sum)
-    if ((int)edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
-      GALOIS_DIE("Failed to read edge index array.");
+    uint64_t numBytesToLoad = edgeIndexSize;
+    uint64_t bytesRead      = 0;
+    while (numBytesToLoad > 0) {
+      ssize_t numRead = read(fd, ((char*)(edgeIndData.data())) + bytesRead,
+                         numBytesToLoad);
+      GALOIS_ASSERT(numRead != -1);
+      numBytesToLoad -= numRead;
+      bytesRead += numRead;
     }
+    assert(numBytesToLoad == 0);
 
-    // read edge destinations for nodes
-    if ((int)edgeDestSize != read(fd, edgeDst.data(), edgeDestSize)) {
-      GALOIS_DIE("Failed to read dest array.");
+
+    //// read indices for nodes (prefix sum)
+    //if ((int)edgeIndexSize != read(fd, edgeIndData.data(), edgeIndexSize)) {
+    //  GALOIS_DIE("Failed to read edge index array.");
+    //}
+
+    numBytesToLoad = edgeDestSize;
+    bytesRead      = 0;
+    while (numBytesToLoad > 0) {
+      ssize_t numRead = read(fd, ((char*)(edgeDst.data())) + bytesRead,
+                         numBytesToLoad);
+      GALOIS_ASSERT(numRead != -1);
+      numBytesToLoad -= numRead;
+      bytesRead += numRead;
     }
+    assert(numBytesToLoad == 0);
+
+    //// read edge destinations for nodes
+    //if ((int)edgeDestSize != read(fd, edgeDst.data(), edgeDestSize)) {
+    //  GALOIS_DIE("Failed to read dest array.");
+    //}
 
     if (!std::is_void<EdgeTy>::value) {
+      off_t curOff = lseek(fd, 0, SEEK_CUR);
+      GALOIS_ASSERT(curOff != -1);
+      if ((uint64_t)curOff != edgeDataOffset) {
+        off_t adjust = edgeDataOffset - curOff;
+        curOff = lseek(fd, adjust, SEEK_CUR);
+        if (curOff == -1) {
+          GALOIS_SYS_DIE("adjust fail");
+        }
+        GALOIS_ASSERT((uint64_t)curOff == edgeDataOffset);
+      }
+      //if ((int)edgeDataOffset != lseek(fd, edgeDataOffset, SEEK_SET)) {
+      //  GALOIS_DIE("Failed to move file pointer to edge data array.");
+      //}
       // TODO assume we only support uint32_t at the moment
       size_t edgeDataSize = numEdges * sizeof(uint32_t);
-      // move file descriptor to node index offsets array.
-      if ((int)edgeDataOffset != lseek(fd, edgeDataOffset, SEEK_SET)) {
-        GALOIS_DIE("Failed to move file pointer to edge data array.");
+      numBytesToLoad = edgeDataSize;
+      bytesRead      = 0;
+      while (numBytesToLoad > 0) {
+        ssize_t numRead = read(fd, ((char*)(edgeData.data())) + bytesRead,
+                           numBytesToLoad);
+        GALOIS_ASSERT(numRead != -1);
+        numBytesToLoad -= numRead;
+        bytesRead += numRead;
       }
-      if ((int)edgeDataSize != read(fd, edgeData.data(), edgeDataSize)) {
-        GALOIS_DIE("Failed to read data array.");
-      }
+      assert(numBytesToLoad == 0);
+      //if ((int)edgeDataSize != read(fd, edgeData.data(), edgeDataSize)) {
+      //  GALOIS_DIE("Failed to read data array.");
+      //}
     }
 
     // file done, close it
