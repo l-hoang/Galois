@@ -38,7 +38,7 @@
 #include "galois/graphs/BufferedGraphWrapper.h"
 
 #include <iostream>
-#include <fstream>
+//#include <fstream>
 
 namespace cll = llvm::cl;
 
@@ -488,11 +488,11 @@ int main(int argc, char** argv) {
   totalTime.stop();
   Tmain.stop();
 
-  if (1) {
-    std::ofstream outfp("sssp_time");
-    outfp << Tmain.get_usec()/(float)1000000 << std::endl;
-    outfp.close();
-  }
+  //if (1) {
+  //  std::ofstream outfp("sssp_time");
+  //  outfp << Tmain.get_usec()/(float)1000000 << std::endl;
+  //  outfp.close();
+  //}
 
   galois::reportPageAlloc("MeminfoPost");
 
