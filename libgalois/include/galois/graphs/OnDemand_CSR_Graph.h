@@ -234,17 +234,17 @@ public:
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
-      nodeData.allocateBlocked(numNodes);
-      edgeIndData.allocateBlocked(numNodes);
-      edgeDst.allocateBlocked(numEdges);
-      edgeData.allocateBlocked(numEdges);
-      this->outOfLineAllocateBlocked(numNodes);
+      nodeData.allocateFloating(numNodes);
+      edgeIndData.allocateFloating(numNodes);
+      edgeDst.allocateFloating(numEdges);
+      edgeData.allocateFloating(numEdges);
+      this->outOfLineAllocateFloating(numNodes);
     } else {
-      nodeData.allocateInterleaved(numNodes);
-      edgeIndData.allocateInterleaved(numNodes);
-      edgeDst.allocateInterleaved(numEdges);
-      edgeData.allocateInterleaved(numEdges);
-      this->outOfLineAllocateInterleaved(numNodes);
+      nodeData.allocateFloating(numNodes);
+      edgeIndData.allocateFloating(numNodes);
+      edgeDst.allocateFloating(numEdges);
+      edgeData.allocateFloating(numEdges);
+      this->outOfLineAllocateFloating(numNodes);
     }
     // construct node data
     for (size_t n = 0; n < numNodes; ++n) {

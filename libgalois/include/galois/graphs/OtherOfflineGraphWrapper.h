@@ -17,13 +17,13 @@
  * Documentation, or loss or inaccuracy of data of any kind.
  */
 
-#ifndef GALOIS_GRAPH__BUFFER_WRAP_GRAPH_H
-#define GALOIS_GRAPH__BUFFER_WRAP_GRAPH_H
+#ifndef GALOIS_GRAPH__OFFLINE_WRAP_GRAPH_H
+#define GALOIS_GRAPH__OFFLINE_WRAP_GRAPH_H
 
 #include "galois/Galois.h"
 #include "galois/graphs/Details.h"
+#include "galois/graphs/OfflineGraph.h"
 #include "galois/graphs/GraphHelpers.h"
-#include "galois/graphs/BufferedGraph.h"
 
 #include <type_traits>
 
@@ -40,36 +40,38 @@ template <typename NodeTy, typename EdgeTy, bool HasNoLockable = false,
           bool UseNumaAlloc =
               false, // true => numa-blocked, false => numa-interleaved
           bool HasOutOfLineLockable = false, typename FileEdgeTy = EdgeTy>
-class BufferedGraphWrapper :
+class OfflineGraphWrapper :
   //! [doxygennuma]
   private boost::noncopyable,
   private internal::LocalIteratorFeature<UseNumaAlloc>,
   private internal::OutOfLineLockableFeature<HasOutOfLineLockable &&
                                              !HasNoLockable> {
 
+  galois::graphs::OfflineGraph g;
+
 public:
   template <bool _has_id>
   struct with_id {
-    typedef BufferedGraphWrapper type;
+    typedef OfflineGraphWrapper type;
   };
 
   template <typename _node_data>
   struct with_node_data {
-    typedef BufferedGraphWrapper<_node_data, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OfflineGraphWrapper<_node_data, EdgeTy, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
 
   template <typename _edge_data>
   struct with_edge_data {
-    typedef BufferedGraphWrapper<NodeTy, _edge_data, HasNoLockable, UseNumaAlloc,
+    typedef OfflineGraphWrapper<NodeTy, _edge_data, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
 
   template <typename _file_edge_data>
   struct with_file_edge_data {
-    typedef BufferedGraphWrapper<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OfflineGraphWrapper<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
                          HasOutOfLineLockable, _file_edge_data>
         type;
   };
@@ -77,31 +79,31 @@ public:
   //! If true, do not use abstract locks in graph
   template <bool _has_no_lockable>
   struct with_no_lockable {
-    typedef BufferedGraphWrapper<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
+    typedef OfflineGraphWrapper<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
   template <bool _has_no_lockable>
   using _with_no_lockable =
-      BufferedGraphWrapper<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
+      OfflineGraphWrapper<NodeTy, EdgeTy, _has_no_lockable, UseNumaAlloc,
                    HasOutOfLineLockable, FileEdgeTy>;
 
   //! If true, use NUMA-aware graph allocation
   template <bool _use_numa_alloc>
   struct with_numa_alloc {
-    typedef BufferedGraphWrapper<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
+    typedef OfflineGraphWrapper<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
                          HasOutOfLineLockable, FileEdgeTy>
         type;
   };
   template <bool _use_numa_alloc>
   using _with_numa_alloc =
-      BufferedGraphWrapper<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
+      OfflineGraphWrapper<NodeTy, EdgeTy, HasNoLockable, _use_numa_alloc,
                    HasOutOfLineLockable, FileEdgeTy>;
 
   //! If true, store abstract locks separate from nodes
   template <bool _has_out_of_line_lockable>
   struct with_out_of_line_lockable {
-    typedef BufferedGraphWrapper<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
+    typedef OfflineGraphWrapper<NodeTy, EdgeTy, HasNoLockable, UseNumaAlloc,
                          _has_out_of_line_lockable, FileEdgeTy>
         type;
   };
@@ -113,18 +115,14 @@ protected:
   typedef internal::NodeInfoBase<NodeTy,
                                  !HasNoLockable && !HasOutOfLineLockable>
       NodeInfo;
-
-  typedef LargeArray<EdgeTy> EdgeData;
-  typedef LargeArray<uint32_t> EdgeDst;
-  typedef LargeArray<uint64_t> EdgeIndData;
   typedef LargeArray<NodeInfo> NodeData;
+
 public:
   typedef uint32_t GraphNode;
   typedef EdgeTy edge_data_type;
   typedef FileEdgeTy file_edge_data_type;
   typedef NodeTy node_data_type;
   typedef typename NodeInfoTypes::reference node_data_reference;
-  typedef typename EdgeData::reference edge_data_reference;
   using edge_iterator = boost::counting_iterator<uint64_t>;
   using iterator = boost::counting_iterator<uint32_t>;
   typedef iterator const_iterator;
@@ -133,20 +131,10 @@ public:
 
 protected:
   NodeData nodeData;
-  EdgeIndData edgeIndData;
-  EdgeDst edgeDst;
-  EdgeData edgeData;
-
   uint64_t numNodes;
   uint64_t numEdges;
-
-  edge_iterator raw_begin(GraphNode N) const {
-    return edge_iterator((N == 0) ? 0 : edgeIndData[N - 1]);
-  }
-
-  edge_iterator raw_end(GraphNode N) const {
-    return edge_iterator(edgeIndData[N]);
-  }
+  size_t getId(GraphNode N) { return N; }
+  GraphNode getNode(size_t n) { return n; }
 
   template <bool _A1 = HasNoLockable, bool _A2 = HasOutOfLineLockable>
   void acquireNode(GraphNode N, MethodFlag mflag,
@@ -164,15 +152,11 @@ protected:
   void acquireNode(GraphNode N, MethodFlag mflag,
                    typename std::enable_if<_A2>::type* = 0) {}
 
-  size_t getId(GraphNode N) { return N; }
-
-  GraphNode getNode(size_t n) { return n; }
-
 
 public:
-  BufferedGraphWrapper(BufferedGraphWrapper&& rhs) = delete;
-  BufferedGraphWrapper()                          = delete;
-  BufferedGraphWrapper& operator=(BufferedGraphWrapper&&) = delete;
+  OfflineGraphWrapper(OfflineGraphWrapper&& rhs) = delete;
+  OfflineGraphWrapper()                          = delete;
+  OfflineGraphWrapper& operator=(OfflineGraphWrapper&&) = delete;
 
   /**
    * Accesses the "prefix sum" of this graph; takes advantage of the fact
@@ -191,63 +175,24 @@ public:
     return true;
   }
 
-  void constructEdge(uint64_t e, uint32_t dst,
-                     const typename EdgeData::value_type& val) {
-    edgeData.set(e, val);
-    edgeDst[e] = dst;
-  }
-  void constructEdge(uint64_t e, uint32_t dst) { edgeDst[e] = dst; }
-  void fixEndEdge(uint32_t n, uint64_t e) { edgeIndData[n] = e; }
-
-  template <typename A=EdgeTy, typename std::enable_if<!std::is_void<A>::value>::type* = nullptr>
-  void constructEdgeWrap(galois::graphs::BufferedGraph<EdgeTy>& g, uint64_t b) {
-    constructEdge(b, g.edgeDestination(b), g.edgeData(b));
-  }
-
-  template <typename A=EdgeTy, typename std::enable_if<std::is_void<A>::value>::type* = nullptr>
-  void constructEdgeWrap(galois::graphs::BufferedGraph<EdgeTy>& g, uint64_t b) {
-    constructEdge(b, g.edgeDestination(b));
-  }
-
-
-  BufferedGraphWrapper(const std::string& filename)  {
-    galois::gInfo("Graph: BufferedGraphWrapper");
-    galois::graphs::BufferedGraph<EdgeTy> g;
-    g.loadGraph(filename);
+  OfflineGraphWrapper(const std::string& filename) : g{filename} {
+    galois::gInfo("Graph: OfflineGraph");
+    // use offline graph 
     numNodes = g.size();
     numEdges = g.sizeEdges();
 
     // allocate memory for node data
     if (UseNumaAlloc) {
-      nodeData.allocateFloating(numNodes);
-      edgeIndData.allocateFloating(numNodes);
-      edgeDst.allocateFloating(numEdges);
-      edgeData.allocateFloating(numEdges);
-      this->outOfLineAllocateFloating(numNodes);
+      nodeData.allocateBlocked(numNodes);
+      this->outOfLineAllocateBlocked(numNodes);
     } else {
-      nodeData.allocateFloating(numNodes);
-      edgeIndData.allocateFloating(numNodes);
-      edgeDst.allocateFloating(numEdges);
-      edgeData.allocateFloating(numEdges);
-      this->outOfLineAllocateFloating(numNodes);
+      nodeData.allocateInterleaved(numNodes);
+      this->outOfLineAllocateInterleaved(numNodes);
     }
     // construct node data
     for (size_t n = 0; n < numNodes; ++n) {
       nodeData.constructAt(n);
     }
-
-    // copy over buffered arrays into this data structure
-    galois::do_all(galois::iterate((uint32_t)0, g.size()),
-      [&](uint32_t i) {
-        auto b = g.edgeBegin(i);
-        auto e = g.edgeEnd(i);
-        fixEndEdge(i, *e);
-        while (b < e) {
-          constructEdgeWrap(g, *b);
-          b++;
-        }
-      }
-    );
   }
 
   node_data_reference getData(GraphNode N,
@@ -259,13 +204,13 @@ public:
   }
 
   // note unlike LC CSR this edge data is immutable
-  edge_data_reference getEdgeData(edge_iterator ni,
+  EdgeTy getEdgeData(edge_iterator ni,
                      MethodFlag mflag = MethodFlag::UNPROTECTED) {
     // galois::runtime::checkWrite(mflag, false);
-    return edgeData[*ni];
+    return g.getEdgeData<EdgeTy>(*ni);
   }
 
-  GraphNode getEdgeDst(edge_iterator ni) { return edgeDst[*ni]; }
+  GraphNode getEdgeDst(edge_iterator ni) { return g.getEdgeDst(*ni); }
 
   size_t size() const { return numNodes; }
   size_t sizeEdges() const { return numEdges; }
@@ -273,35 +218,35 @@ public:
   iterator begin() const { return iterator(0); }
   iterator end() const { return iterator(numNodes); }
 
-  const_local_iterator local_begin() const {
-    return const_local_iterator(this->localBegin(numNodes));
-  }
+  //const_local_iterator local_begin() const {
+  //  return const_local_iterator(this->localBegin(numNodes));
+  //}
 
-  const_local_iterator local_end() const {
-    return const_local_iterator(this->localEnd(numNodes));
-  }
+  //const_local_iterator local_end() const {
+  //  return const_local_iterator(this->localEnd(numNodes));
+  //}
 
-  local_iterator local_begin() {
-    return local_iterator(this->localBegin(numNodes));
-  }
+  //local_iterator local_begin() {
+  //  return local_iterator(this->localBegin(numNodes));
+  //}
 
-  local_iterator local_end() {
-    return local_iterator(this->localEnd(numNodes));
-  }
+  //local_iterator local_end() {
+  //  return local_iterator(this->localEnd(numNodes));
+  //}
 
   edge_iterator edge_begin(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
     acquireNode(N, mflag);
-    if (galois::runtime::shouldLock(mflag)) {
-      for (edge_iterator ii = raw_begin(N), ee = raw_end(N); ii != ee; ++ii) {
-        acquireNode(edgeDst[*ii], mflag);
-      }
-    }
-    return raw_begin(N);
+    //if (galois::runtime::shouldLock(mflag)) {
+    //  for (edge_iterator ii = edge_begin(N), ee = edge_end(N); ii != ee; ++ii) {
+    //    acquireNode(g.getEdgeDst(*ii), mflag);
+    //  }
+    //}
+    return g.edge_begin(N);
   }
 
   edge_iterator edge_end(GraphNode N, MethodFlag mflag = MethodFlag::WRITE) {
     acquireNode(N, mflag);
-    return raw_end(N);
+    return g.edge_end(N);
   }
 
   runtime::iterable<NoDerefIterator<edge_iterator>>
@@ -316,14 +261,10 @@ public:
   }
 
   void deallocate() {
+    // node edge data
     nodeData.destroy();
     nodeData.deallocate();
-    edgeIndData.destroy();
-    edgeIndData.deallocate();
-    edgeDst.destroy();
-    edgeDst.deallocate();
-    edgeData.destroy();
-    edgeData.deallocate();
+    // mappings will be destroyed by destructor
   }
 };
 } // namespace graphs

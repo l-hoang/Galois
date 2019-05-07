@@ -324,11 +324,11 @@ public:
 
     // allocate memory for node and edge data
     if (UseNumaAlloc) {
-      nodeData.allocateBlocked(numNodes);
-      this->outOfLineAllocateBlocked(numNodes);
+      nodeData.allocateFloating(numNodes);
+      this->outOfLineAllocateFloating(numNodes);
     } else {
-      nodeData.allocateInterleaved(numNodes);
-      this->outOfLineAllocateInterleaved(numNodes);
+      nodeData.allocateFloating(numNodes);
+      this->outOfLineAllocateFloating(numNodes);
     }
     // construct node data
     for (size_t n = 0; n < numNodes; ++n) {

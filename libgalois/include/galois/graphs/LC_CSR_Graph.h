@@ -461,18 +461,18 @@ public:
     // std::cerr << "\n**" << numNodes << " " << numEdges << "\n\n";
     if (UseNumaAlloc) {
       //! [numaallocex]
-      nodeData.allocateBlocked(numNodes);
-      edgeIndData.allocateBlocked(numNodes);
-      edgeDst.allocateBlocked(numEdges);
-      edgeData.allocateBlocked(numEdges);
+      nodeData.allocateFloating(numNodes);
+      edgeIndData.allocateFloating(numNodes);
+      edgeDst.allocateFloating(numEdges);
+      edgeData.allocateFloating(numEdges);
       //! [numaallocex]
-      this->outOfLineAllocateBlocked(numNodes, false);
+      this->outOfLineAllocateFloating(numNodes, false);
     } else {
-      nodeData.allocateInterleaved(numNodes);
-      edgeIndData.allocateInterleaved(numNodes);
-      edgeDst.allocateInterleaved(numEdges);
-      edgeData.allocateInterleaved(numEdges);
-      this->outOfLineAllocateInterleaved(numNodes);
+      nodeData.allocateFloating(numNodes);
+      edgeIndData.allocateFloating(numNodes);
+      edgeDst.allocateFloating(numEdges);
+      edgeData.allocateFloating(numEdges);
+      this->outOfLineAllocateFloating(numNodes);
     }
     // std::cerr << "Done Alloc\n";
     for (size_t n = 0; n < numNodes; ++n) {
